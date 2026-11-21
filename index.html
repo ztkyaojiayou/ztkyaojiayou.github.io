@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>邹同琨 - 后端 / Agent 高级开发工程师</title>
+  <meta name="description" content="5 年后端开发，专注高并发数据链路、分布式系统与企业级 Agent（RAG / MCP）落地，深耕 IoT 与 SaaS 两类业务场景。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    /* ===== 全局 ===== */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      line-height: 1.6;
+      color: #333;
+    }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+    /* ===== 导航栏 ===== */
+    .navbar {
+      position: fixed;
+      top: 0;
+      width: 100%;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      z-index: 1000;
+      padding: 1rem 0;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .nav-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .nav-logo a { font-size: 1.5rem; font-weight: 700; color: #2c3e50; text-decoration: none; }
+
+    .nav-menu { display: flex; list-style: none; gap: 2rem; }
+    .nav-menu a { text-decoration: none; color: #333; font-weight: 500; transition: color 0.3s ease; }
+    .nav-menu a:hover { color: #667eea; }
+
+    /* ===== 首屏 Hero ===== */
+    .hero {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      text-align: center;
+      padding: 120px 24px 72px;
+    }
+
+    .hero-content h1 { font-size: 4rem; margin-bottom: 1rem; }
+    .hero-content h2 { font-size: 2rem; margin-bottom: 1rem; font-weight: 500; }
+    .hero-content p { font-size: 1.2rem; margin-bottom: 1rem; opacity: 0.95; }
+
+    .hero-buttons { margin-top: 2rem; }
+
+    .btn {
+      display: inline-block;
+      padding: 12px 30px;
+      text-decoration: none;
+      border-radius: 50px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+      margin: 0 10px;
+      border: 2px solid transparent;
+    }
+
+    .btn-primary { background-color: #667eea; color: white; }
+    .btn-primary:hover { background-color: #5a6fd6; transform: translateY(-2px); }
+
+    .btn-secondary { background-color: transparent; color: white; border-color: white; }
+    .btn-secondary:hover { background-color: white; color: #667eea; transform: translateY(-2px); }
+
+    /* ===== 通用区块 ===== */
+    section { padding: 100px 0; }
+    section.alt { background-color: #f8f9fa; }
+
+    h2 {
+      text-align: center;
+      font-size: 2.5rem;
+      margin-bottom: 3rem;
+      color: #2c3e50;
+    }
+
+    /* ===== 关于我 ===== */
+    .about-content {
+      display: grid;
+      grid-template-columns: 4fr 1fr;
+      gap: 4rem;
+      align-items: center;
+    }
+
+    .about-text p { font-size: 1.1rem; margin-bottom: 1.5rem; line-height: 1.8; color: #444; }
+
+    .about-image img {
+      width: 100%;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    }
+
+    /* ===== 技术能力卡片 ===== */
+    .skills-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 2rem;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .skill-card {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+      padding: 2rem;
+      text-align: center;
+      min-height: 200px;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .skill-card:hover { transform: translateY(-10px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18); }
+    .skill-card h3 { margin-bottom: 1rem; font-weight: 700; color: #2c3e50; font-size: 1.5rem; }
+    .skill-card p { font-size: 1rem; color: #7f8c8d; line-height: 1.6; }
+
+    /* ===== 成功案例 ===== */
+    .works-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+    }
+
+    .work-card {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+      padding: 2rem;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .work-card:hover { transform: translateY(-10px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18); }
+    .work-card h3 { color: #2c3e50; font-size: 1.25rem; margin-bottom: 0.25rem; }
+    .work-card .meta { font-size: 0.85rem; color: #7f8c8d; margin-bottom: 1rem; }
+    .work-card ul { padding-left: 1.2rem; }
+    .work-card li { color: #555; margin-bottom: 0.5rem; line-height: 1.6; }
+
+    /* ===== 联系咨询 ===== */
+    .contact-content {
+      max-width: 700px;
+      margin: 0 auto;
+      text-align: center;
+    }
+
+    .contact-content h3 { color: #2c3e50; margin-bottom: 1rem; }
+    .contact-content p { color: #555; }
+
+    .contact-details { margin-top: 2rem; }
+    .contact-details p { margin-bottom: 0.8rem; }
+    .contact-details a { color: #667eea; text-decoration: none; }
+    .contact-details a:hover { text-decoration: underline; }
+
+    /* ===== 页脚 ===== */
+    .footer {
+      background: #2c3e50;
+      color: white;
+      text-align: center;
+      padding: 2rem 0;
+      font-size: 0.9rem;
+    }
+
+    /* ===== 响应式 ===== */
+    @media (max-width: 768px) {
+      .nav-menu { gap: 1rem; }
+      .hero-content h1 { font-size: 2.5rem; }
+      .hero-content h2 { font-size: 1.5rem; }
+      .hero-content p { font-size: 1rem; }
+      section { padding: 60px 0; }
+      h2 { font-size: 2rem; margin-bottom: 2rem; }
+      .about-content { grid-template-columns: 1fr; gap: 2rem; }
+      .about-image { max-width: 200px; margin: 0 auto; }
+      .skills-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="#home">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="#about">关于我</a></li>
+        <li><a href="#skills">技术能力</a></li>
+        <li><a href="#works">成功案例</a></li>
+        <li><a href="#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- ===== 首屏 ===== -->
+  <section id="home" class="hero">
+    <div class="hero-content">
+      <h1>邹同琨</h1>
+      <h2>后端 / Agent 高级开发工程师</h2>
+      <p>专注高并发数据链路、分布式系统与企业级 Agent（RAG / MCP）落地</p>
+      <p>5 年后端开发经验 · IoT · SaaS · Agent 开发 · 北京</p>
+      <div class="hero-buttons">
+        <a href="#contact" class="btn btn-primary">联系咨询</a>
+        <a href="#about" class="btn btn-secondary">了解更多</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 关于我 ===== -->
+  <section id="about">
+    <div class="container">
+      <h2>关于我</h2>
+      <div class="about-content">
+        <div class="about-text">
+          <p>你好，我是同琨，一名后端开发工程师，5 年服务端开发经验。长期在业务一线负责核心系统的架构设计、性能调优与从 0 到 1 落地，也参与过多个遗留系统的微服务化改造；擅长在大数据量、高并发场景下做架构权衡与稳定性治理。</p>
+          <p>目前在四方继保担任高级开发工程师 / 项目经理，负责新能源 IoT 平台核心数据链路与场站 AI 运维助手的建设；此前在携程大住宿团队，参与丽呈 SaaS 餐饮 POS 系统的 Java 重构与并发治理。</p>
+          <p>主要技术方向：高并发数据链路与容量评估、分布式系统与微服务治理、SaaS 多租户业务架构，以及 Spring AI Alibaba / RAG / MCP 等企业级 Agent 工程落地。</p>
+        </div>
+        <div class="about-image">
+          <img src="assets/photo.jpg" alt="邹同琨 头像" width="200">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 技术能力 ===== -->
+  <section id="skills" class="alt">
+    <div class="container">
+      <h2>技术能力</h2>
+      <div class="skills-grid">
+        <div class="skill-card">
+          <h3>高并发数据链路</h3>
+          <p>亿级报文接入、多路独立消费、时序存储与冷热分层，擅长吞吐标定、压测与容量评估建模。</p>
+        </div>
+        <div class="skill-card">
+          <h3>分布式系统与微服务</h3>
+          <p>架构设计与演进、遗留系统重构，并发控制、幂等治理与跨系统一致性保障。</p>
+        </div>
+        <div class="skill-card">
+          <h3>SaaS 多租户业务架构</h3>
+          <p>多酒店数据隔离与路由、PMS 对接，订单、账单与挂账场景的业务建模与一致性设计。</p>
+        </div>
+        <div class="skill-card">
+          <h3>AI / Agent 工程</h3>
+          <p>Spring AI Alibaba、RAG 检索链路、MCP 工具封装与 ReAct Agent 的企业级落地。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 成功案例 ===== -->
+  <section id="works">
+    <div class="container">
+      <h2>成功案例</h2>
+      <div class="works-grid">
+
+        <div class="work-card">
+          <h3>新能源场站 AI 运维助手</h3>
+          <div class="meta">项目负责人　｜　2025.08 – 2026.06</div>
+          <ul>
+            <li>Spring AI Alibaba + MCP + RAG 架构，提供 RAG 智能问答与 ReAct Agent 智能运维两大能力。</li>
+            <li>多跳拆分 + rerank，多跳召回 +22.7pp，Recall@5 0.917，检索 P50 66ms。</li>
+            <li>12 个只读工具零改造接入既有系统；三条红线 + 入参授权闸，越权远程零调用（6/6）。</li>
+            <li>按满额使用测算，单场站年节省约 1,500 人时（≈0.9 FTE）。</li>
+          </ul>
+        </div>
+
+        <div class="work-card">
+          <h3>电力 IoT 实时数据处理系统</h3>
+          <div class="meta">项目负责人　｜　2023.11 – 2024.09</div>
+          <ul>
+            <li>接入 1.2w+ 设备、175w 测点秒级上报，日均约 7 亿条报文（峰值 10 亿）。</li>
+            <li>落地「边缘采集 — MQTT — FEP — Kafka — 四路独立消费」ETL 架构并完成调优压测。</li>
+            <li>降采样 + 冷热分层，3 年历史数据 737TB → 37TB，存储成本降约 20 倍。</li>
+            <li>全链路埋点，端到端 P99 RT &lt; 600ms，定位并迁移 7 处系统瓶颈。</li>
+          </ul>
+        </div>
+
+        <div class="work-card">
+          <h3>SaaS 酒店在线点餐系统</h3>
+          <div class="meta">核心骨干　｜　2021.08 – 2022.03</div>
+          <ul>
+            <li>服务携程旗下数百家自营酒店在线 POS 点餐，完成老 .NET 系统的 Java/Spring Boot 重构。</li>
+            <li>一店一库多租户架构，请求级切库 + 实例注册表热刷新，DB 连接数降低 47 倍。</li>
+            <li>四层分级并发控制（CAS + DB 锁 + Redis 分布式锁 + 唯一键兜底）。</li>
+            <li>PMS 挂房账先检后写 + fail-close + 对账兜底，保证跨系统最终一致。</li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 联系咨询 ===== -->
+  <section id="contact" class="alt">
+    <div class="container">
+      <div class="contact-content">
+        <h2>联系咨询</h2>
+        <h3>保持联系</h3>
+        <p>如果你正在构建后端系统、高并发数据链路或企业级 Agent，欢迎交流。</p>
+        <div class="contact-details">
+          <p>📧 Email：<a href="mailto:zoutongkun0807@163.com">zoutongkun0807@163.com</a></p>
+          <p>🐙 GitHub：<a href="https://github.com/ztkyaojiayou" target="_blank" rel="noopener">github.com/ztkyaojiayou</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>© 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
