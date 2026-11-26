@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FEP 前置：点表翻译该放在哪 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="翻译不是一个函数，是一个边界。它决定了改一次模型要动多少台设备、未映射的点怎么办、以及缓存失效的那一瞬间会发生什么。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>FEP 前置——点表翻译该放在哪</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 5 篇</div>
+
+    <div class="takeaway">
+      <p>翻译不是一个函数，是一个<strong>边界</strong>。它决定了三件事：改一次模型要动多少台设备、认不出来的点怎么办、以及缓存失效的那一瞬间会发生什么。</p>
+      <p>把它放在哪里，本质上是在选「谁的变更半径最大」。放在边缘，半径是上万台设备；放在平台侧各消费者，半径是每一处消费代码。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
+
+    <h2>一、数据进来了，但平台不认识它</h2>
+
+    <p>上一篇讲完，数据已经越过弱网、进了平台的网络边界。但它现在长这样：设备 <code>WTG-0231</code> 发来一条报文，里面是 <code>P-3A-07</code>、<code>P-3A-08</code>、<code>P-3B-01</code> 三个原厂点号，值是 <code>12.7</code>、<code>0</code>、<code>1543</code>。</p>
+
+    <p>平台的世界完全是另一套坐标：它认识的是「设备 ID + 测点 ID + 数据类型 + 单位」。<code>P-3A-07</code> 到底是齿轮箱油温还是机舱温度？单位是摄氏度还是 0.1℃ 的整数？是模拟量还是开关量？<strong>这些信息在报文里没有，只在点表里。</strong></p>
+
+    <p>所以链路上必须有一步「翻译」：把原厂坐标映射到平台坐标。听起来像一个查表函数，但它的位置远比它的实现重要。</p>
+
+    <h2>二、翻译的位置，本质是选谁的变更半径</h2>
+
+    <p>有三个候选位置：</p>
+
+    <figure>
+      <svg viewBox="0 0 900 300" role="img" aria-label="三种翻译位置的变更半径对比">
+        <defs>
+          <marker id="a6" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <!-- 方案 A：边缘翻译 -->
+        <text x="20" y="34" font-size="13" fill="#2c3e50">A · 翻译放在边缘</text>
+        <rect x="20" y="44" width="120" height="52" rx="6" fill="#fdf3f3" stroke="#d98b8b"/>
+        <text x="80" y="75" text-anchor="middle" font-size="13" fill="#8a5a5a">边缘 × N 台</text>
+        <path d="M140,70 L196,70" stroke="#d98b8b" stroke-width="1.5" marker-end="url(#a6)"/>
+        <rect x="202" y="44" width="110" height="52" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="257" y="75" text-anchor="middle" font-size="12" fill="#8a9199">Broker</text>
+        <path d="M312,70 L368,70" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a6)"/>
+        <rect x="374" y="44" width="150" height="52" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="449" y="75" text-anchor="middle" font-size="12" fill="#8a9199">消费侧（直接用）</text>
+        <text x="548" y="75" font-size="13" fill="#b06a6a">改一次模型 → 推上万台设备</text>
+
+        <!-- 方案 B：FEP -->
+        <text x="20" y="144" font-size="13" fill="#2c3e50">B · 翻译放在 FEP</text>
+        <rect x="20" y="154" width="120" height="52" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="80" y="185" text-anchor="middle" font-size="12" fill="#8a9199">边缘（只发原厂点号）</text>
+        <path d="M140,180 L196,180" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a6)"/>
+        <rect x="202" y="154" width="110" height="52" rx="6" fill="#eef7f1" stroke="#3f9a63"/>
+        <text x="257" y="185" text-anchor="middle" font-size="13" fill="#2c3e50">FEP 翻译</text>
+        <path d="M312,180 L368,180" stroke="#3f9a63" stroke-width="1.5" marker-end="url(#a6)"/>
+        <rect x="374" y="154" width="150" height="52" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="449" y="185" text-anchor="middle" font-size="12" fill="#8a9199">消费侧（拿现成的）</text>
+        <text x="548" y="185" font-size="13" fill="#3f9a63">改一次模型 → 改一处配置</text>
+
+        <!-- 方案 C：消费侧各自翻译 -->
+        <text x="20" y="254" font-size="13" fill="#2c3e50">C · 翻译散在消费侧</text>
+        <rect x="20" y="264" width="120" height="30" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="80" y="284" text-anchor="middle" font-size="12" fill="#8a9199">边缘</text>
+        <path d="M140,279 L196,279" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a6)"/>
+        <rect x="202" y="264" width="110" height="30" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="257" y="284" text-anchor="middle" font-size="12" fill="#8a9199">Broker</text>
+        <path d="M312,279 L368,279" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a6)"/>
+        <rect x="374" y="264" width="150" height="30" rx="6" fill="#fdf3f3" stroke="#d98b8b"/>
+        <text x="449" y="284" text-anchor="middle" font-size="12" fill="#8a5a5a">每个消费者各翻一遍</text>
+        <text x="548" y="284" font-size="13" fill="#b06a6a">改一次模型 → 改 N 处代码</text>
+      </svg>
+      <figcaption>译错一次，三种位置的返工范围差了两个数量级</figcaption>
+    </figure>
+
+    <p>为什么 B 明显更优，原因不在性能，而在<strong>变更半径</strong>：</p>
+
+    <ul>
+      <li><strong>A（边缘）</strong>：模型一变，上万台设备都要更新点表。而现场设备「常年不升级」是常态——于是平台会慢慢不敢改模型，最终数据的定义被硬件冻结。</li>
+      <li><strong>C（消费侧）</strong>：每个消费者各写一遍翻译，同一条数据在四条链路里可能有四种映射结果。出了问题无法判断谁对。</li>
+      <li><strong>B（单独一层）</strong>：模型变更只改一处配置，两侧都不动。</li>
+    </ul>
+
+    <p>顺带说，这也是为什么我们明确写下一条纪律：<strong>边缘只上原厂点号，不认平台身份</strong>。边缘不是不能做这个映射，而是「做了之后，平台就失去了改模型的能力」。</p>
+
+    <h2>三、未映射的点：丢弃、计数、不猜</h2>
+
+    <p>翻译层一定会遇到一种输入：报文里有个点号，点表里没有。</p>
+
+    <p>处理方式只有三种，而两种看起来更"友好"的做法都是错的：</p>
+
+    <table>
+      <thead>
+        <tr><th>做法</th><th>看起来</th><th>实际后果</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>透传</strong>（用原厂点号直接写下去）</td>
+          <td>"至少数据没丢"</td>
+          <td>下游的存储 key、告警规则、查询索引全部出现两种命名体系——<strong>整个 key 空间被污染</strong></td>
+        </tr>
+        <tr>
+          <td><strong>猜</strong>（按名称相似度自动匹配）</td>
+          <td>"能自动补上"</td>
+          <td>错映射比不映射更糟：数据进了错的测点，<strong>而且看起来完全正常</strong></td>
+        </tr>
+        <tr>
+          <td><strong>丢弃 + 计数</strong></td>
+          <td>"数据丢了"</td>
+          <td>丢的是一条本就没有身份的报文；计数让它<strong>可见</strong>，运维能立刻知道该补点表</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>我们选第三种。它的关键是最后两个字：<strong>计数</strong>。丢弃本身不危险，静默丢弃才危险——「未映射点数」必须是一个被观测、被报警的指标，否则点表少了一条配置，你不会知道，直到某天业务方问「这个测点为什么没有数据」。</p>
+
+    <p>这条原则可以推广成一句话：<strong>系统可以拒绝数据，但不能假装没看见数据</strong>。</p>
+
+    <h2>四、值闸：判完之后怎么办</h2>
+
+    <p>第 2 篇讲过「清洗放边缘最便宜」，那里说的是<strong>无状态、逐点可判</strong>的清洗——非法值、坏质量码、超量程。而 FEP 这一层的校验不太一样：它要按<strong>平台配置</strong>判，比如这个测点的量程范围、这个设备该有的取值范围。这类校验依赖点表，所以放在翻译之后。</p>
+
+    <p>两种校验的分工是清楚的，但有一个问题两边都会遇到，而我们的处理还不完整：<strong>判出来之后，是丢掉，还是标记？</strong></p>
+
+    <p>现状是<strong>直接丢弃</strong>。它简单、省事，而且从「不让脏数据流下去」的角度看是对的。但它会让下游失去一个重要区分：</p>
+
+    <blockquote>
+      「这个点没有数据」和「这个点有数据，但数据不可信」是两件完全不同的事。
+    </blockquote>
+
+    <p>前者可能是设备离线，后者可能是传感器故障。前者需要的是补数，后者需要的是派人去看传感器。丢掉之后，两者在下游眼里长得一模一样，处置方式自然也就会错。</p>
+
+    <p>正确的做法是<strong>保留并打上质量标记</strong>：让下游知道「这个点在坏质量状态，不要拿它做判断，但要把这个状态说出来」。我们还试过一个看起来更省事的替代方案——坏质量时改用「上一帧的值」——结果对变化率类规则直接算错：值没变，它会得出「速率 = 0 ⇒ 已回落」，而坏质量根本不该判回落。</p>
+
+    <p>为什么这件事我们到现在还没做完？因为它要同时改三处：数据模型里加质量字段、所有判定规则加一条「坏质量不判但重申」的分支、以及值闸本身从丢弃改成标记。三处不同步，就会出现「有些路认这个字段、有些路不认」的半成品状态。<strong>这类「改动面横跨三层」的事情，最好的策略是一次做完，而不是分三次。</strong></p>
+
+    <h2>五、三级缓存：价值不在命中率，在失效瞬间</h2>
+
+    <p>先算一下这笔账。整个平台的测点映射是百万量级的：一条映射要记原厂点号、平台测点 ID、数据类型、单位、量程，加起来一百多字节，百万条就是几百 MB。而 FEP 每秒要处理几万帧报文、每帧上百个点——<strong>每秒百万级的查表次数</strong>。</p>
+
+    <p>这个规模直接排除了两个方案：每帧查一次数据库（打爆连接池），或者全部走共享缓存（每秒百万次网络往返，Redis 也扛不住）。所以点表必须落在<strong>进程内内存</strong>里，而且每个实例都得持有全量——几百 MB 换每秒百万次零往返，这笔账非常划算。</p>
+
+    <p>问题随之而来：进程内缓存怎么在多实例之间保持一致。这就引出了三级结构：</p>
+
+    <ol>
+      <li><strong>L1：进程内</strong>，最快，但每个实例各一份；</li>
+      <li><strong>L2：共享缓存</strong>（Redis），跨实例一致，但多一次网络往返；</li>
+      <li><strong>L3：回源</strong>，直接查权威存储。</li>
+    </ol>
+
+    <p>看起来二级就够了，为什么还要第三级？答案藏在<strong>失效的顺序</strong>里：</p>
+
+    <blockquote>
+      写侧失效的顺序是「清理 → 广播 → 重建」。而广播清理 L1 的那一刻，L2 也是空的。
+    </blockquote>
+
+    <p>这个窗口非常短，但它真的会发生：一条报文在这个瞬间到达，L1 被清空了，去查 L2 也是空，于是它被判成「未映射」而丢弃——<strong>并且计入未映射计数，看起来像是一次正常的点表缺失</strong>。第三级回源就是用来堵这个窗口的：宁可多一次慢查询，也不要在这个瞬间丢数据。</p>
+
+    <p>有意思的是量级：实测 L1 命中率约 96.5%，而 L2 累计只命中了四百多次。也就是说，<strong>L2 几乎不承担正常流量，它存在的意义主要是「L1 被清空后别直接打数据库」</strong>。</p>
+
+    <p>这带来一个反直觉的结论：<strong>多级缓存的价值不在命中率，而在失效瞬间的正确性</strong>。如果只按命中率去评估，L2 和 L3 几乎都该被砍掉；但它们防的不是常态，是那个几千分之一秒的窗口。</p>
+
+    <h2>六、一次点表变更，是怎么走完全集群的</h2>
+
+    <p>「改一处配置」听起来很轻，但它要真正生效，得穿过所有正在跑的实例。这条路径值得写清楚，因为它是「翻译放 FEP」这个决定能不能兑现的关键。</p>
+
+    <p>完整的一条路径是：</p>
+
+    <ol>
+      <li><strong>改配置并升版本号</strong>。点表变更不是原地覆盖，而是产生一个新版本——这是回滚的前提。</li>
+      <li><strong>广播失效</strong>。通知所有实例：L1 清空。此时共享缓存里的旧版本也一起清掉，避免实例从 L2 拿回旧数据。</li>
+      <li><strong>各实例按需重建</strong>。下一个请求到达时，从回源重新加载，然后继续正常服务。</li>
+      <li><strong>版本收敛</strong>。每个实例上报自己当前的版本号，全部等于新版本才算真正生效。</li>
+    </ol>
+
+    <p>第三步到第四步之间，就是前面说的那个「窗口」。窗口里发生的事必须提前想好：如果这时来了一条只有新版本才认识的点号，它会被判成未映射——所以<strong>点表变更必须和「未映射计数」的监控一起看</strong>，否则变更期间的那点丢弃会完全隐形。</p>
+
+    <p>第四步是最容易被忽略的一步。很多系统只做到「广播成功」，就认为变更生效了；但广播是异步的，某个实例可能因为重启、网络抖动而没收到，它就会一直用旧点表工作。<strong>「发布了」和「生效了」不是一回事</strong>，只有版本号收敛才算生效。</p>
+
+    <p>版本号还顺带解决两件事：<strong>回滚</strong>（把版本改回去再广播一次，路径完全相同，不需要特殊的回滚流程）和<strong>灰度</strong>（先让一部分实例升版本，观察一段时间再全量）。这两件事在「原地改配置」的做法下都很难做。</p>
+
+    <h2>七、去重为什么放在翻译之前</h2>
+
+    <p>FEP 里的处理顺序是：<strong>先判重，再翻译，最后攒批</strong>。这个顺序不是随手排的。</p>
+
+    <p>判重需要的信息其实很少：这台设备、这个序号，我是不是已经处理过了。它<strong>不需要知道这个点叫什么</strong>。而设备身份从 MQTT 的 topic 里就能拿到，序号在报文头里，两者都不依赖点表。</p>
+
+    <p>所以把去重放在最前面，有两个直接好处：</p>
+
+    <ul>
+      <li><strong>省掉无用的查表</strong>。重复报文会被直接丢掉，不会浪费一次点表查询、一次值校验、一次序列化。</li>
+      <li><strong>让去重语义更稳定</strong>。即使点表配置错了、缓存失效了，去重这一层仍然按「设备 + 序号」正常工作——它不依赖任何容易被改坏的东西。</li>
+    </ul>
+
+    <p>这也和第 3 篇那条结论咬合：去重的判据是「同一设备的有序前缀」，而设备的边界在 MQTT 这一层就已经确定了。翻译、清洗、判定都建立在这个边界之内，反过来则不成立。</p>
+
+    <h2>八、攒批：一条报文不等于一个测点</h2>
+
+    <p>FEP 的第四个职责是攒批，这一条经常被忽略，但它直接决定了下一站消息层的容量口径。</p>
+
+    <p>设备上来的报文里可能有上百个测点，但写进消息队列时，它是<strong>一条消息</strong>。这个差异不是实现细节，而是<strong>两个相差两个数量级的量纲</strong>：测点速率和消息速率。</p>
+
+    <p>如果每来一条报文就立刻往下游发一次，那么下游面对的是「每帧一次 RPC」——序列化、网络往返、批量提交全部按帧摊销，成本极高。攒批就是把多帧合成一次发送：</p>
+
+    <ul>
+      <li><strong>按条数攒</strong>：累计到一定点数（比如五千点）就发一次；</li>
+      <li><strong>按时间攒</strong>：最多等一个固定时间（比如一秒），到点就发，不管攒够没有。</li>
+    </ul>
+
+    <p>两个上限取先到者。这样既有摊薄效果，又不会因为流量小而让数据无限期滞留在缓冲里——低频设备如果只按条数攒，可能要等很久才凑够一批。</p>
+
+    <p>代价是引入了一段确定的延迟：最多一个时间上限。对秒级的业务时效来说可以接受，但如果有人要求「毫秒级可见」，那攒批就是第一个要重新权衡的地方。</p>
+
+    <p>还有一条硬约束：<strong>攒批不能跨设备</strong>。因为下游要按设备做分区键保序，如果一批里混了多台设备的数据，这一批就没法用一个键路由了。所以攒批的边界天然就是设备——同一台设备的帧可以攒，不同设备的帧不能攒。</p>
+
+    <h2>九、边界：什么时候翻译可以合并进边缘</h2>
+
+    <p>这套「翻译单独一层」的设计不是无条件的。它在下面这些情况下会显得过重：</p>
+
+    <ul>
+      <li><strong>单客户、模型几乎不变</strong>。如果点表三年没动过，且设备升级通道顺畅，把翻译下沉到边缘可以省掉一个组件。</li>
+      <li><strong>设备数量很少</strong>。几十台设备的规模，批量推一次配置是分钟级的事，变更半径不构成问题。</li>
+      <li><strong>没有多租户概念</strong>。一旦要按租户隔离坐标体系，独立一层几乎是必然的。</li>
+    </ul>
+
+    <p>判断标准还是那条：<strong>你的变更半径有多大，决定了这一层该不该独立</strong>。模型会频繁演进、设备又推不动的地方，翻译就必须是一个独立的、能单独发版的东西。</p>
+
+    <h2>下一篇</h2>
+
+    <p>翻译完、校验完、攒好批，FEP 把数据写进消息队列。下一站是消息层——那里有一个看起来很简单、实际上决定了整条链路顺序性的选择：<strong>用什么做分区键</strong>。以及一个更隐蔽的问题：为什么「一条报文的点率」和「一条消息的条数」差两个数量级，而这个差异会让容量估算错得离谱。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
