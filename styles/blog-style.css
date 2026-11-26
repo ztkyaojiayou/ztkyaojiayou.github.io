@@ -126,8 +126,8 @@
   margin-left: 0.5rem;
 }
 
-/* ===== 正文页（第 1 篇真文章时启用） ===== */
-.post-body { max-width: 800px; margin: 0 auto; padding: 3rem 20px 100px; }
+/* ===== 正文页 ===== */
+.post-body { max-width: 800px; margin: 0 auto; padding: 120px 20px 100px; }
 .post-body h1 { font-size: 2rem; color: #2c3e50; margin-bottom: 0.5rem; }
 .post-body .post-meta { color: #7f8c8d; font-size: 0.9rem; margin-bottom: 2rem; }
 .post-body h2 { font-size: 1.5rem; text-align: left; margin: 2.5rem 0 1rem; }
@@ -203,4 +203,6 @@
   .page-hero .hero-content h1 { font-size: 1.8rem; }
   .article-list { margin: -30px 1rem 0; padding: 1.5rem; }
   .blog-post { padding-bottom: 60px; }
+  .post-body { padding: 100px 16px 60px; }
+  .post-body h1 { font-size: 1.6rem; }
 }
