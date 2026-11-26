@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>亿级报文链路的分层设计 - IoT 实时数据链路</title>
+  <meta name="description" content="一条实时数据链路的复杂度不来自数据量大，而来自四个互相拉扯的约束。分层的目的，是让每一层拥有独立的失败模式。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css">
+  <link rel="stylesheet" href="../../styles/blog-style.css">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>亿级报文链路的分层设计</h1>
+    <div class="post-meta">IoT 实时数据链路 · 第 1 篇</div>
+
+    <div class="takeaway">
+      <p>一条实时数据链路的复杂度，几乎从不来自「数据量大」，而来自四个互相拉扯的约束：<strong>秒级时效、不丢、可查、成本可算</strong>。</p>
+      <p>分层不是为了架构图好看，而是为了让每一层拥有<strong>独立的失败模式</strong>——某一层塌了，其它层还能降级活着，并且你知道塌的是哪一层。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
+
+    <h2>一、先说约束，不说技术选型</h2>
+
+    <p>我见过不少链路设计文档，第一页是架构图，第二页是技术选型：Kafka 因为「高吞吐」，IoTDB 因为「时序专用」，Redis 因为「快」。这些理由都对，但它们解释不了任何一次具体的架构分歧——因为两个人的选型清单往往一样，做出来的系统却一个能扛、一个天天救火。</p>
+
+    <p>真正决定形状的是约束。这条链路上有四个：</p>
+
+    <table>
+      <thead>
+        <tr><th>约束</th><th>含义</th><th>对架构的直接要求</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>秒级时效</strong></td>
+          <td>从设备产生数据到能在页面上看到，要在秒级</td>
+          <td>必须有常驻的流式通路，不能靠定时批处理兜</td>
+        </tr>
+        <tr>
+          <td><strong>不丢</strong></td>
+          <td>断网、重启、上游重投之后，数据最终要齐</td>
+          <td>要有缓冲、重传与去重；且「重复」必须是无害的</td>
+        </tr>
+        <tr>
+          <td><strong>可查</strong></td>
+          <td>既要当前值，也要几个月前的历史曲线</td>
+          <td>热数据与冷数据要分开存，查询口径要一致</td>
+        </tr>
+        <tr>
+          <td><strong>成本可算</strong></td>
+          <td>存得下，且算得出明天要多少机器</td>
+          <td>每一层都要能给出「单实例上限」，而不是只有一个总数</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>这四条不是并列的，是<strong>互相拉扯</strong>的：为了「不丢」要多存一份缓冲，为了「成本可算」要少存；为了「秒级」要常驻连接，为了「可查」又要能接受离线重算。真正的架构分歧，几乎都能翻译成「这两条约束在这里谁让一步」。</p>
+
+    <p>由此得出一条我自己很受用的原则：<strong>不要让一层同时承担两件节奏不同的事</strong>。一旦一层既要接流量又要算指标，你就会被这两件事的最慢节奏同时绑住——扩容也没用，因为瓶颈在节奏不匹配，不在机器数量。</p>
+
+    <h2>二、反例：一条直连链路会断在哪</h2>
+
+    <p>最省事的写法是：边缘采集 → 消息队列 → 直接写库。链路短，代码少，演示效果很好。它在下面五个地方一定会断，而且多数是<strong>静默地断</strong>——监控是绿的，数据是错的。</p>
+
+    <ol>
+      <li><strong>写放大</strong>。一条报文里可能有上百个测点，逐点写入等于把消息量放大两个数量级。消息队列里是「一条消息」，数据库里是「上百次写」，中间这个差就是你的第一次容量误判。</li>
+      <li><strong>背压无处释放</strong>。库慢了，消费就慢；消费慢了，消息堆积；堆积到阈值只能丢。整条链路只有一个缓冲，它既要吸收突发，又要容忍下游抖动。</li>
+      <li><strong>乱序与重复</strong>。QoS1 语义下重投是常态，断链恢复后的补发也是常态。直连链路没有地方做「同设备有序」，只能靠数据库覆盖写兜底——但如果连覆盖键都没想清楚，重复就是脏数据。</li>
+      <li><strong>重算污染</strong>。派生指标（比如分钟均值）一旦重投，窗口就被算两遍。这类错误不会报警，只会让曲线慢慢失真。</li>
+      <li><strong>口径打架</strong>。补发的旧数据混在实时流里，会让实时快照<strong>往回跳</strong>，也会让告警按历史值误判。「当前值」和「历史值」在一条链路上，就等于没有当前值。</li>
+    </ol>
+
+    <p>我们后来否掉了一批看起来很合理的方案，理由都是同一条——<strong>它们解决的是下游本来就能容忍的问题，代价却是延迟或复杂度</strong>：</p>
+
+    <ul>
+      <li><strong>不做边缘重排</strong>。乱序确实存在，但下游的「(序列, 时间) 覆盖写」本来就幂等，为了消灭乱序去做重排，等于用确定的延迟换一个下游根本不敏感的属性。</li>
+      <li><strong>不做分库分表</strong>。当时的第一反应是「数据这么多，难道不该分片」，实际测下来瓶颈是每个事件的 2~3 次往返次数，而分片增加的恰恰是跨库往返——负收益。</li>
+      <li><strong>不用 Redis 做幂等</strong>。Redis 能表达「这个键我见过」，表达不了「这个键的处理结果是什么」。幂等需要的是后者。</li>
+      <li><strong>不插值补全</strong>。补出来的点不是采样值，一旦进库，就再也分不清「实测」和「猜的」。</li>
+    </ul>
+
+    <p>把这四条放在一起看，会发现它们共享一个特征：<strong>被否掉的不是「做不到」，而是「做了更糟」</strong>。能说清「什么没做、为什么」，比多上一个组件更能说明你真的想过。</p>
+
+    <h2>三、四层，各自负责一件会失败的事</h2>
+
+    <p>最终的形态是四层。划层的依据不是「技术栈不同」，而是<strong>失败模式不同</strong>：每一层都必须能回答「我这一层塌了，谁受影响、谁不受影响」。</p>
+
+    <figure>
+      <svg viewBox="0 0 1000 340" role="img" aria-label="四层链路架构图">
+        <defs>
+          <marker id="arw" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <!-- 主链路 -->
+        <rect x="16" y="140" width="150" height="64" rx="8" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="91" y="168" text-anchor="middle" font-size="15" fill="#2c3e50">现场设备</text>
+        <text x="91" y="189" text-anchor="middle" font-size="12" fill="#7f8c8d">边缘采集 · 变化上送</text>
+
+        <rect x="206" y="140" width="130" height="64" rx="8" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="271" y="168" text-anchor="middle" font-size="15" fill="#2c3e50">MQTT 接入</text>
+        <text x="271" y="189" text-anchor="middle" font-size="12" fill="#7f8c8d">长连接 · QoS1</text>
+
+        <rect x="376" y="140" width="130" height="64" rx="8" fill="#eef7f1" stroke="#3f9a63"/>
+        <text x="441" y="168" text-anchor="middle" font-size="15" fill="#2c3e50">FEP 前置</text>
+        <text x="441" y="189" text-anchor="middle" font-size="12" fill="#7f8c8d">点表翻译 · 去重 · 攒批</text>
+
+        <rect x="546" y="140" width="120" height="64" rx="8" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="606" y="168" text-anchor="middle" font-size="15" fill="#2c3e50">Kafka</text>
+        <text x="606" y="189" text-anchor="middle" font-size="12" fill="#7f8c8d">设备为分区键</text>
+
+        <path d="M166,172 L200,172" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+        <path d="M336,172 L370,172" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+        <path d="M506,172 L540,172" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+
+        <!-- 四路消费 -->
+        <rect x="706" y="28" width="150" height="56" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="781" y="52" text-anchor="middle" font-size="14" fill="#2c3e50">历史消费</text>
+        <text x="781" y="71" text-anchor="middle" font-size="11" fill="#7f8c8d">at-least-once</text>
+
+        <rect x="706" y="104" width="150" height="56" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="781" y="128" text-anchor="middle" font-size="14" fill="#2c3e50">实时消费</text>
+        <text x="781" y="147" text-anchor="middle" font-size="11" fill="#7f8c8d">快照 · 防回跳</text>
+
+        <rect x="706" y="180" width="150" height="56" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="781" y="204" text-anchor="middle" font-size="14" fill="#2c3e50">告警判定</text>
+        <text x="781" y="223" text-anchor="middle" font-size="11" fill="#7f8c8d">全量逐点 · 有状态</text>
+
+        <rect x="706" y="256" width="150" height="56" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="781" y="280" text-anchor="middle" font-size="14" fill="#2c3e50">指标派生</text>
+        <text x="781" y="299" text-anchor="middle" font-size="11" fill="#7f8c8d">at-most-once</text>
+
+        <path d="M666,172 L690,172" stroke="#9aa4b2" stroke-width="1.5"/>
+        <path d="M690,56 L690,284" stroke="#9aa4b2" stroke-width="1.5"/>
+        <path d="M690,56 L700,56" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+        <path d="M690,132 L700,132" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+        <path d="M690,208 L700,208" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+        <path d="M690,284 L700,284" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+
+        <text x="690" y="170" text-anchor="middle" font-size="11" fill="#7f8c8d" transform="rotate(-90 690,170)"></text>
+
+        <!-- 存储 -->
+        <rect x="886" y="28" width="98" height="284" rx="8" fill="#fafbfc" stroke="#d6dae3" stroke-dasharray="4 3"/>
+        <text x="935" y="150" text-anchor="middle" font-size="16" fill="#2c3e50">存储层</text>
+        <text x="935" y="174" text-anchor="middle" font-size="12" fill="#7f8c8d">时序库</text>
+        <text x="935" y="194" text-anchor="middle" font-size="12" fill="#7f8c8d">Redis</text>
+        <text x="935" y="214" text-anchor="middle" font-size="12" fill="#7f8c8d">PG / 对象存储</text>
+
+        <path d="M856,56 L880,56" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+        <path d="M856,132 L880,132" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+        <path d="M856,208 L880,208" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+        <path d="M856,284 L880,284" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arw)"/>
+      </svg>
+      <figcaption>四层链路：接入决定「发多少」，FEP 决定「是谁」，消费决定「什么节奏写」，存储决定「留多久」</figcaption>
+    </figure>
+
+    <table>
+      <thead>
+        <tr><th>层</th><th>只负责一件事</th><th>搞砸的后果</th><th>不会传染给</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>边缘接入</strong></td><td>决定「每秒该发多少」</td><td>带宽与存储成本成倍上涨</td><td>消费逻辑</td></tr>
+        <tr><td><strong>FEP 前置</strong></td><td>决定「这条数据是谁的」</td><td>点号污染下游全部 key 空间</td><td>接入协议</td></tr>
+        <tr><td><strong>消费层</strong></td><td>决定「以什么节奏落库」</td><td>落库积压，实时性退化</td><td>接入层与边缘</td></tr>
+        <tr><td><strong>存储层</strong></td><td>决定「留多久、怎么查」</td><td>查询变慢、成本失控</td><td>生产侧（写不受影响）</td></tr>
+      </tbody>
+    </table>
+
+    <p>这张表最有用的一列是最后一列。当有人问「这里能不能改」，先看它属于哪一层，再看这次改动的失败会传染给谁——不会传染的，就是可以快速试错的地方。</p>
+
+    <h2>四、接入层：先把「每秒该发多少」降下来</h2>
+
+    <p>绝大多数容量问题的正确答案不在下游，而在源头：<strong>先把量级降下来，再谈怎么扛</strong>。</p>
+
+    <h3>三类上送规则 + 一个心跳</h3>
+
+    <p>边缘侧的上送规则最后收敛成三类，加上一个只为了「证明我活着」的心跳：</p>
+
+    <ul>
+      <li><strong>变位上送</strong>：开关量只在状态翻转时发；</li>
+      <li><strong>死区上送</strong>：模拟量只有在变化幅度超过阈值时才发；</li>
+      <li><strong>周期总召</strong>：到点全量发一次，兜底。</li>
+    </ul>
+
+    <p>这里有个容易踩的坑：<strong>死区不是越大越好</strong>。死区会把「持续小幅波动但确实越限」的情况永久掩盖掉——曲线看起来一直正常，告警永远不响。所以死区必须配一个周期总召 T 兜底：T 只保证「平台看到的值陈旧度不超过 T」，它<strong>不保证</strong>能检出持续时长短于 T 的越限。这个边界写清楚，比调参数重要得多。</p>
+
+    <p>还有一个不对称：平台侧的迟滞死区必须比边缘死区更宽，实践中约束是<strong>边缘死区 ≤ 平台死区 / 3</strong>。原因是网关不认平台的身份模型，两侧的判据粒度天生对不齐；边缘放得比平台还宽，就会出现「边缘不发、平台也判不出来」的盲区。</p>
+
+    <h3>压缩比要带上口径说</h3>
+
+    <p>「变化上送能把量降多少」这个问题，答案不是一个数，而是一个区间，因为它是两个量的函数：</p>
+
+    <blockquote>
+      压缩比的天花板 ≈ c·T（c 是每秒变化次数，T 是周期），地板 ≈ 总点数 / T。<br>
+      真实负荷通常塌到<b>地板</b>附近——因为实际系统的变化率远低于理论值。
+    </blockquote>
+
+    <p>在我们的场景里，1 秒档实测约 <strong>30 倍</strong>，而理论天花板可以到 600 倍。这两个数差了一个数量级，如果只报 600 倍，等于把上限说成了实测。更关键的是：<strong>地板与 c 无关</strong>，所以「降低采集档位」和「变化上送」的收益是<strong>重叠的，不能叠加</strong>——很多容量估算就是在这里翻倍的。</p>
+
+    <h3>断点续传：不能只是「攒着再发」</h3>
+
+    <p>断网期间的数据要补，但补发链路有三个必须处理的问题：</p>
+
+    <ol>
+      <li><strong>缓冲要有界</strong>。我们用的是「内存 + 落盘、总容量约 50MB、满了丢最旧」——不是「无限攒」。无限攒的结果是设备在长时间断网后 OOM，连实时数据都发不出去。</li>
+      <li><strong>序号要落盘</strong>。设备重启后序号从零开始，如果不持久化已发序号，恢复后会被判定为「重复」而整条丢弃——这是最典型的「补发补了个寂寞」。</li>
+      <li><strong>补发要有序，且与实时流互斥</strong>。连发时新帧先到、旧帧后到，会让旧的真数据被当成重复吞掉。</li>
+    </ol>
+
+    <p>补发数据走<strong>独立的 Topic</strong>，这个决定看起来很重，其实很轻：只有历史消费订阅它，隔离是靠<strong>订阅关系</strong>而不是靠代码里的 if 判断。如果混进实时流，实时快照会往回跳、告警会按几小时前的值判定——这类 bug 极难复现，因为只在断网恢复的瞬间出现。</p>
+
+    <h3>FEP 为什么必须单独存在</h3>
+
+    <p>FEP 位于 MQTT 和消息队列之间，做四件事：点表翻译、值闸、去重、攒批。有人会问：为什么不放在边缘？</p>
+
+    <p>因为<strong>点表会变</strong>。如果翻译放在边缘，平台每改一次模型，就要推万台级网关；而放在 FEP，改一次配置就行。反过来，如果把原厂点号直接透传到下游，未映射的点会污染整个 key 空间——那时候你面对的不是「某条数据错了」，而是「所有存储和告警的键都不可信」。所以未映射的点只能丢弃并计数，<strong>不猜</strong>。</p>
+
+    <h3>三级缓存：为什么要回源</h3>
+
+    <p>点表映射是高频读取，自然要做缓存：进程内 → Redis → 回源。前两级不够用吗？</p>
+
+    <p>不够，因为<strong>失效顺序</strong>：写侧的顺序是「清理 → 广播 → 重建」，而广播清理进程内缓存的那一刻，Redis 里也是空的。这个窗口里到达的整帧数据，会被当成「未映射」而丢弃或沿用旧值。第三级回源就是为了堵这个窗口。</p>
+
+    <p>有意思的是量级：进程内命中率约 96.5%，而 Redis 这一级<strong>累计只命中了四百多次</strong>。也就是说 L2 几乎不承担正常流量，它存在的意义主要是「进程内被清空后别去打数据库」。<strong>缓存分级的价值不在命中率，而在失效瞬间。</strong></p>
+
+    <h2>五、消费层：一份数据，四种节奏</h2>
+
+    <h3>键的选择，先于消费者的编写</h3>
+
+    <p>分区键决定了两件事：<strong>同一设备的数据是否有序</strong>，以及<strong>流量是否均匀</strong>。选设备 ID 作键，同设备必然同分区，分区内有序；同时设备数量足够多，流量自然打散。如果为了「聚合方便」选一个更粗的键，就会立刻出现单分区热点——扩分区也救不了，因为热点是一个键。</p>
+
+    <p>还有一个容易被忽略的量级差：一条报文里可能有上百个测点，但在消息队列里它只是<strong>一条消息</strong>。所以「报文率」与「点率」差两个数量级（我们的场景是 142 倍）。很多容量估算在这里张冠李戴——用点率去算分区数，或者用报文率去估写入压力。</p>
+
+    <h3>为什么是四路，而不是一路写四个地方</h3>
+
+    <p>同一份报文，被四个消费者各自消费一遍。这看起来是重复劳动，实际是<strong>把四种节奏拆开</strong>：</p>
+
+    <table>
+      <thead>
+        <tr><th>消费路</th><th>目标</th><th>幂等语义</th><th>关键取舍</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>历史</strong></td>
+          <td>写时序库，可回放补数</td>
+          <td>at-least-once（时间覆盖写）</td>
+          <td>只有它「加机器」能扩；写并行度受实现限制</td>
+        </tr>
+        <tr>
+          <td><strong>实时</strong></td>
+          <td>当前值快照</td>
+          <td>at-least-once（写失败必须重投）</td>
+          <td>它是 Store 不是 Cache；要用批次时间戳守卫防回跳</td>
+        </tr>
+        <tr>
+          <td><strong>告警</strong></td>
+          <td>逐点判定，有状态</td>
+          <td>at-least-once</td>
+          <td>吃全量数据；真瓶颈是「每个点都要读一次状态」</td>
+        </tr>
+        <tr>
+          <td><strong>派生</strong></td>
+          <td>分钟级降采样</td>
+          <td><strong>at-most-once</strong>（重投会把窗口算错）</td>
+          <td>绝不回读时序库；不可回补</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>这张表里最反直觉的是最后一列：<strong>四路的幂等语义必须不一样</strong>。原始点可以容忍重复（覆盖写）；派生指标不能（重投导致窗口算两遍）；通知类更不行（下游第三方网关多数没有幂等键，重复一条短信就是真金白银加一次投诉）。</p>
+
+    <p>所以「统一幂等策略」这种看起来很整洁的想法，在这个场景里是错的。<strong>幂等语义是跟着「重复的代价」走的，不是跟着代码风格走的。</strong></p>
+
+    <h3>压缩：省的是落盘，不是写速</h3>
+
+    <p>我们开启了消息压缩，实测 producer 侧压缩比约 6 倍。但有两个细节值得记下来：</p>
+
+    <ul>
+      <li>它解决的是<strong>落盘体积和跨机带宽</strong>，不是「写得更快」。把压缩当作吞吐优化，会得出相反的结论。</li>
+      <li><strong>broker 侧必须关闭压缩</strong>。否则 broker 收到压缩批后解压、再按自己的配置重压、再写多个副本——等于把 CPU 和 IO 都乘了一遍。</li>
+    </ul>
+
+    <h2>六、存储层：先算账，再谈分层</h2>
+
+    <h3>批量写不是优化，是红线</h3>
+
+    <p>当前值存 Redis，如果逐个字段写，命令率等于<strong>点率</strong>；整批一次性写入，命令率等于<strong>报文率</strong>——两者差两个数量级。所以「批量写」在这里不是一个可选优化，而是一条红线：<strong>命令率必须跟着消息率走</strong>。</p>
+
+    <h3>时序库的元数据墙</h3>
+
+    <p>选时序库的理由通常是「写入快、压缩率高」，但真正先撞上的往往是<strong>元数据</strong>：每个序列在服务端要占几 KB 堆内存。百万级序列乘下来就是几个 GB，而这部分内存<strong>不参与写入限流</strong>。</p>
+
+    <p>它的表象极具迷惑性：客户端表现为「写不进去、在重试」，看起来像网络或写入慢，实际上<strong>一个字节都没进库</strong>。我们第一次遇到时排查了很久，因为所有写入侧的指标都是正常的。</p>
+
+    <h3>顺序：先做闸门，再做分层</h3>
+
+    <p>分层存储（热/温/冷）是有效的，但它的位置经常被搞反。正确的顺序是：</p>
+
+    <ol>
+      <li><strong>先把量级压下来</strong>（边缘变化上送），这一步的收益是数量级；</li>
+      <li><strong>再谈分层</strong>，这一步的收益是成本结构。</li>
+    </ol>
+
+    <p>如果反过来先做分层，你得到的只是「把一个大得多的数字分摊到三档存储上」，总量没变。而在我们的场景里，做完第 1 步之后，三年历史数据的体积降了约 20 倍。</p>
+
+    <p>另外两条约束值得记：</p>
+
+    <ul>
+      <li><strong>降采样必须旁路算，不能回读</strong>。时序库的强项是「按时间范围扫」，弱项是「按设备整条读」——后者的吞吐低一个量级。所以降采样从消息流里实时算，不回读历史库。</li>
+      <li><strong>聚合值要和原值分开序列空间</strong>。「采样值的聚合」和「聚合值」不是一回事，混在一起以后，你再也说不清某条曲线是实测还是算出来的。</li>
+    </ul>
+
+    <h3>分区表拿不到全局唯一</h3>
+
+    <p>告警审计数据按月分区、超期归档到对象存储，方案本身很标准。但它带来一个隐藏约束：<strong>分区表无法建立全局唯一索引</strong>（PostgreSQL 只有分区内唯一）。</p>
+
+    <p>而业务上又需要一个全局幂等键。最后解法是让幂等键<strong>自带时间锚</strong>——把时间栅格编进键里，使「同分区唯一」自动等价于「业务唯一」。这是个很小的技巧，但它把「不能兼得」变成了「换个编码就能兼得」。</p>
+
+    <h2>七、证据：怎么证明每一层达标</h2>
+
+    <p>架构写完只是开始，接下来要回答：<strong>每一层的上限是多少，超了会以什么形式坏</strong>。</p>
+
+    <h3>压测要从瓶颈之后开始</h3>
+
+    <p>我们最早犯的错是从边缘打压力。测了很久，结果都很平滑——因为边缘单实例只能跑一千条每秒左右，<strong>压力根本到不了后面的链路</strong>。后来改成旁路压测：直接往消息队列灌数据，绕过边缘和接入。</p>
+
+    <p>这带来一个必须回答的问题：<strong>怎么确认瓶颈在被测链路，而不是在施压工具自己</strong>。做法是加一个「自证探针」——压测器自己记录「我已经发出去了多少、实际被处理了多少」，两者出现系统性差时，先怀疑施压侧。</p>
+
+    <h3>阶梯法比单点更快找到拐点</h3>
+
+    <p>按 10%、20%、40% 逐档加压，每档至少跑三分钟不重启，观察的是<strong>拐点</strong>而不是平均值。单点测试只能告诉你「这个负载下没问题」，阶梯测试能告诉你「从哪一档开始，延迟开始非线性」。</p>
+
+    <h3>最贵的一课：离线 48 倍，线上只兑现 3.4 倍</h3>
+
+    <p>这是整个项目里我印象最深的一次测量。离线单机压测显示某一路写吞吐可以提升 <strong>48 倍</strong>，上线后线上实测只兑现了 <strong>3.4 倍</strong>。</p>
+
+    <p>原因不是「线上环境差」，而是<strong>瓶颈迁移了</strong>：离线测试里，时间花在「每次写都要一次网络往返」；改造之后往返次数降下来了，时间转而花在「构造数据块本身」——单核 86.7% 的时间在做这件事。</p>
+
+    <blockquote>
+      优化把一个瓶颈打掉之后，你得到的不是「快 48 倍」，而是「换了一个瓶颈」。<br>
+      所以任何「提升 N 倍」的结论，都要问一句：下一个瓶颈在哪，它离现在有多远。
+    </blockquote>
+
+    <p>这也顺带解释了一件事：为什么简历式的「性能提升 30 倍」往往经不起追问——不是数字假，而是<strong>没有交代它是在哪个瓶颈前测的</strong>。</p>
+
+    <h2>八、边界：什么时候不要做这套</h2>
+
+    <p>这套分层不是默认答案。以下情况它会是负债：</p>
+
+    <ul>
+      <li><strong>数据量不够大</strong>。几十台设备、每天几十万条报文，一个数据库加上定时任务就够了。分层会让你付出四套组件的运维成本，换来用不上的扩展性。</li>
+      <li><strong>允许丢数据</strong>。如果业务本来只需要「大概的趋势」，那断点续传、去重、幂等这些机制可以直接砍掉，复杂度能降一半。</li>
+      <li><strong>不是时序数据</strong>。分层、降采样、冷热数据这些概念都建立在「按时间有序、越新越热」的前提上。</li>
+      <li><strong>团队没有 Kafka 与时序库的运维经验</strong>。这条最容易被忽略：架构的复杂度最终是由运维能力兑付的，兑付不了的部分会以「半夜被叫起来」的形式还回来。</li>
+    </ul>
+
+    <p>判断标准其实很简单：<strong>你的四个约束里，有几个是真约束？</strong>如果「秒级」其实是「分钟级也行」、「不丢」其实是「丢一点没关系」，那这套架构就是在为一个不存在的问题付学费。</p>
+
+    <h2>下一篇</h2>
+
+    <p>这一篇讲的是「为什么分成这四层」。下一篇单独拆<strong>接入层</strong>：变化上送、死区与周期兜底怎么配合，断点续传的三个坑，以及压缩比那个「天花板 vs 地板」的口径问题——那是容量估算最容易翻倍的地方。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>

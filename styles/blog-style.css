@@ -158,6 +158,45 @@
 }
 .post-body a { color: #667eea; }
 
+.post-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1.6rem;
+  font-size: 0.95rem;
+}
+.post-body th, .post-body td {
+  border: 1px solid #e6e8eb;
+  padding: 0.6rem 0.8rem;
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.7;
+}
+.post-body th { background: #f6f7fb; color: #2c3e50; font-weight: 600; }
+
+.post-body figure { margin: 0 0 1.8rem; }
+.post-body figure svg { width: 100%; height: auto; display: block; }
+.post-body figcaption {
+  text-align: center;
+  font-size: 0.85rem;
+  color: #8a9199;
+  margin-top: 0.6rem;
+}
+
+.post-body .takeaway {
+  background: #f6f7fb;
+  border-left: 4px solid #667eea;
+  padding: 1rem 1.2rem;
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 1.6rem;
+}
+.post-body .takeaway p:last-child { margin-bottom: 0; }
+
+.post-body .back-link {
+  display: inline-block;
+  margin-top: 2rem;
+  font-size: 0.95rem;
+}
+
 /* ===== 响应式 ===== */
 @media (max-width: 768px) {
   .page-hero { height: auto; min-height: auto; padding: 100px 20px 60px; }
