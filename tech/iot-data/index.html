@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IoT 高并发实时数据链路 - 系列文章</title>
-  <meta name="description" content="亿级报文从边缘采集到时序存储的架构设计与工程落地。八篇按数据流向，从边缘接入一路讲到时序存储。">
+  <meta name="description" content="亿级报文从边缘采集到时序存储的架构设计与工程落地。十四篇按数据流向，从边缘接入一路讲到时序存储与告警送达。">
   <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
   <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../../styles/styles.css">
@@ -40,13 +40,15 @@
       <div class="article-list">
 
         <div class="intro">
-          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>的完整链路。八篇按数据的流向排列：边缘怎么少发、断了怎么补、FEP 怎么归一、消息怎么保序、四路怎么消费、存储怎么算账，最后是怎么标定每一层的上限。</p>
+          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>与<strong>告警送达</strong>的完整链路。十四篇按数据流向排列：前半程跟一条数据从边缘走到存储，后半程跟一个告警从判定走到用户的手机，最后两篇横向收束——讲并发模型，讲怎么标定每一层的上限。</p>
           <ul>
             <li>边缘：上送策略与可靠性</li>
             <li>接入：点表翻译与去重</li>
             <li>消息：分区键、保序与压缩</li>
             <li>消费：四路解耦与差异化幂等</li>
-            <li>存储：容量账、元数据墙与分层</li>
+            <li>存储：时序库 / Redis / 对象存储 / PostgreSQL 四种介质</li>
+            <li>告警：判定、通知决议与投递</li>
+            <li>并发：串行点与并行点</li>
             <li>标定：压测与瓶颈迁移</li>
           </ul>
           <p>建议<strong>按顺序读</strong>——每一篇都建立在上一篇的结论上：先有「少发」才有后面的容量账，先有「保序」才谈得上消费侧的幂等。目标是讲透「高并发 IoT 数据链路」这一整条线，而不是罗列若干个知识点。</p>
@@ -95,14 +97,56 @@
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 7 篇：时序存储——容量账、元数据墙与分层</a></h3>
+          <h3><a>第 7 篇：历史存储——时序库的容量账、元数据墙与分层</a></h3>
           <div class="meta">即将发布</div>
-          <p class="desc">为什么先做闸门再做分层；元数据墙的表象为什么是「写不进去」；降采样为什么不能回读。</p>
+          <p class="desc">容量账怎么算；元数据墙的表象为什么是「写不进去」；为什么先做闸门再做分层；降采样为什么不能回读。</p>
           <p class="highlight">👉 核心观点：算不清的容量，测出来也不算数</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 8 篇：容量与压测——怎么标定每一层的上限</a></h3>
+          <h3><a>第 8 篇：实时快照——Redis 为什么是 Store 不是 Cache</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">写失败为什么必须重投；旧批为什么能把快照拉回去；批量写为什么是红线而不是优化。</p>
+          <p class="highlight">👉 核心观点：快照一旦回跳，实时性就等于没有</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 9 篇：告警判定——全量逐点判定的代价</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">为什么判定要吃全量数据；判定状态该归谁；规则引擎真正的瓶颈在哪。</p>
+          <p class="highlight">👉 核心观点：告警的难点不在规则多，而在「每个点都要看一眼」</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 10 篇：告警通知——谁该收、要不要打扰</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">订阅、匹配与可见性怎么决定收件人；去重、聚合、升级与免打扰的取舍。</p>
+          <p class="highlight">👉 核心观点：通知链里最值钱的一步是「不打扰」</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 11 篇：推送投递——地址、渠道与不重复</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">渠道分池隔离、Outbox、重试与去重；为什么第三方网关没有幂等键时宁可少发。</p>
+          <p class="highlight">👉 核心观点：多送一条的代价，比漏送一条更高</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 12 篇：告警审计存储——分区、归档与时间锚幂等键</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">分区表为什么拿不到全局唯一；时间锚幂等键怎么让它兼得；归档与删除的顺序。</p>
+          <p class="highlight">👉 核心观点：分区与唯一性，可以靠改编码兼得</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 13 篇：高并发设计——哪里必须串行，哪里才该并行</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">这条链路里哪些点必须串行、哪些才可以并行；背压、队列上界与路间隔离；为什么有的路加机器有用、有的加机器没用。</p>
+          <p class="highlight">👉 核心观点：高并发的第一步是数清「必须串行的地方」</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 14 篇：容量与压测——怎么标定每一层的上限</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">旁路压测、自证探针、阶梯法；以及为什么「提升 48 倍」上线只兑现 3.4 倍。</p>
           <p class="highlight">👉 核心观点：打掉一个瓶颈，得到的是下一个瓶颈</p>
