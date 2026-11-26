@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>边缘接入：怎么把每秒要发的量降下来 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="决定成本的不是发得多快，而是发了多少条。变位、死区、周期兜底三个旋钮怎么配合，以及它们为什么常常互相抵消。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>边缘接入——怎么把每秒要发的量降下来</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 2 篇</div>
+
+    <div class="takeaway">
+      <p>决定成本的不是「发得多快」，而是「发了多少条」。一条链路的上行带宽和存储账单，在边缘侧就已经被定死了。</p>
+      <p>变位、死区、周期兜底这三个旋钮不是三选一，而是<strong>三个必须同时调对的约束</strong>——任何一个单独调，都可能把系统调成一个看起来省、实际不省，或者省了但开始漏告警的状态。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
+
+    <h2>一、从两条曲线说起</h2>
+
+    <p>先说现象。中心侧有两条曲线会一起动：一条是上行带宽，一条是时序库的存储账单。它们涨起来的形状几乎一样，涨幅也差不多——因为对同一条数据来说，传上去和存下来是同一次决定的两个后果。</p>
+
+    <p>看到这两条线，最常见的反应是优化「发送效率」：批量发送、压缩报文、异步上传、增大连接复用。这些都值得做，我也都做过。但它们优化的是<strong>「同样的数据发得更快」</strong>，而真正决定成本的是另一个问题：</p>
+
+    <blockquote>这些数据，本来该不该发？</blockquote>
+
+    <p>这个问题只能在边缘回答。数据一旦离开边缘，后面每一层（接入、消息、消费、存储）做的都是「怎么处理」——它们可以决定处理得多高效，但决定不了处理多少。所以容量这件事，<strong>八成的答案在源头，两成在下游</strong>。</p>
+
+    <h2>二、先算清楚「谁在发」</h2>
+
+    <p>在谈优化之前，得先有一个基准。定义三个量：</p>
+
+    <ul>
+      <li><strong>P</strong>：测点总数；</li>
+      <li><strong>f</strong>：采集频率，单位是「每秒采集次数」；</li>
+      <li><strong>T</strong>：周期兜底的间隔，单位秒。</li>
+    </ul>
+
+    <p>如果每个点每采集一次就上传一次，基准上送速率是 <code>P × f</code>。这个数字往往被严重低估：一台设备可能上百个测点，一万台设备就是百万级测点；如果采集是秒级的，那基准就是<strong>每秒百万级点数</strong>。而一条报文里装 N 个点只算一条消息，所以「报文率」和「点率」天生差两个数量级——这也是后面所有容量估算最容易出错的地方。</p>
+
+    <p>每秒百万点的量级，任何下游都接不住，也没有必要接：绝大多数测点在绝大多数时刻<strong>根本没变</strong>。传统工业协议早就给出了答案，三类规则加上一个心跳。</p>
+
+    <h2>三、三个旋钮</h2>
+
+    <figure>
+      <svg viewBox="0 0 960 300" role="img" aria-label="三个上送旋钮与上送速率的关系">
+        <defs>
+          <marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <rect x="16" y="108" width="150" height="84" rx="8" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="91" y="140" text-anchor="middle" font-size="15" fill="#2c3e50">测点全集</text>
+        <text x="91" y="164" text-anchor="middle" font-size="12" fill="#7f8c8d">P 个点 · f 次/秒</text>
+
+        <path d="M166,150 L206,150" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a2)"/>
+
+        <rect x="212" y="20" width="230" height="62" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="237" y="46" font-size="14" fill="#2c3e50">变位上送</text>
+        <text x="237" y="66" font-size="12" fill="#7f8c8d">开关量：状态翻转才发</text>
+
+        <rect x="212" y="118" width="230" height="62" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="237" y="144" font-size="14" fill="#2c3e50">死区上送</text>
+        <text x="237" y="164" font-size="12" fill="#7f8c8d">模拟量：变化超阈值才发</text>
+
+        <rect x="212" y="216" width="230" height="62" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="237" y="242" font-size="14" fill="#2c3e50">周期兜底</text>
+        <text x="237" y="262" font-size="12" fill="#7f8c8d">到点全量发一次（+ 心跳）</text>
+
+        <path d="M206,150 L206,51 L206,247" stroke="#9aa4b2" stroke-width="1.5"/>
+        <path d="M206,51 L208,51" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a2)"/>
+        <path d="M206,149 L208,149" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a2)"/>
+        <path d="M206,247 L208,247" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a2)"/>
+
+        <path d="M442,51 L502,120" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a2)"/>
+        <path d="M442,149 L502,149" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a2)"/>
+        <path d="M442,247 L502,178" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a2)"/>
+
+        <rect x="508" y="98" width="180" height="104" rx="8" fill="#eef7f1" stroke="#3f9a63"/>
+        <text x="598" y="132" text-anchor="middle" font-size="15" fill="#2c3e50">实际上送量</text>
+        <text x="598" y="156" text-anchor="middle" font-size="12" fill="#7f8c8d">≈ 变化量 + P/T</text>
+        <text x="598" y="178" text-anchor="middle" font-size="12" fill="#7f8c8d">（兜底部分不可省）</text>
+
+        <path d="M688,150 L738,150" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a2)"/>
+
+        <rect x="744" y="108" width="200" height="84" rx="8" fill="#fafbfc" stroke="#d6dae3" stroke-dasharray="4 3"/>
+        <text x="844" y="140" text-anchor="middle" font-size="14" fill="#2c3e50">带宽 / 存储成本</text>
+        <text x="844" y="164" text-anchor="middle" font-size="12" fill="#7f8c8d">与上送量成正比</text>
+      </svg>
+      <figcaption>三个旋钮各自作用于不同点类型，但都汇入同一个「实际上送量」——而兜底那部分是它们的公共下限</figcaption>
+    </figure>
+
+    <table>
+      <thead>
+        <tr><th>旋钮</th><th>作用于</th><th>判据</th><th>设错的后果</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>变位上送</strong></td><td>开关量</td><td>状态与上次不同（严格不等）</td><td>几乎不会设错，但点类型判错就全错</td></tr>
+        <tr><td><strong>死区上送</strong></td><td>模拟量</td><td>变化幅度 ≥ 阈值</td><td>阈值过大 → <strong>永久掩盖小幅越限</strong></td></tr>
+        <tr><td><strong>周期兜底</strong></td><td>全部测点</td><td>距上次上送超过 T</td><td>T 过大 → 陈旧度失控；T 过小 → 白花流量</td></tr>
+      </tbody>
+    </table>
+
+    <h2>四、旋钮一：变位上送</h2>
+
+    <p>变位上送最没有争议：开关量只有「合/分」两个状态，状态不变就没有信息量。判据是<strong>严格不等</strong>——哪怕用浮点比较，也应该用「不等于」而不是「差值超过阈值」，因为开关量本来就不该有中间态。</p>
+
+    <p>它真正容易错的地方不在判据，而在<strong>点类型的判定</strong>：必须由边缘<strong>本地配置</strong>决定这个点是开关量还是模拟量，不能靠运行期的值去猜。靠猜的后果很隐蔽——某个开关量恰好在几个采集周期里呈现 0.0 和 1.0 之外的值（比如故障码、无效值），被判成模拟量，于是它开始走死区逻辑，然后这个点的告警就再也不准了。</p>
+
+    <p>另外两个必须写进协议的边界：<strong>首见必报</strong>（平台第一次看到这个点时，无论变没变都要发一次，否则上位机会永远没有初值），<strong>非法值必报</strong>（NaN、±Inf 不能被「变化比较」吞掉——它们本身就是需要被看见的异常）。</p>
+
+    <h2>五、旋钮二：死区上送</h2>
+
+    <p>死区是三个旋钮里最危险的一个，因为它<strong>会永久掩盖告警</strong>。</p>
+
+    <p>设想一个温度点，死区设成 2℃。它从 60.0 慢慢爬到 61.9，一路都没触发上送；但在平台侧，平台最后一次看到的仍然是 60.0。如果告警阈值是 61.5，这条越限就<strong>永远不会发生</strong>——不是告警延迟了，是它在平台的世界里从未存在过。</p>
+
+    <p>所以死区必须配一个周期兜底：<strong>死区只负责「少发」，兜底负责「迟早会被看见」</strong>。这两件事缺一不可，只配死区不配兜底，等于把告警系统建在一个不可靠的假设上。</p>
+
+    <p>死区还有一个配置上的常见做法：默认值取 0，表示「只要严格不相等就上报」；需要抑制噪声的点，按点号或按设备单独覆盖。这样默认行为是最保守的（不漏），噪声抑制是显式选择，而不是全局默认。</p>
+
+    <h3>为什么边缘死区必须比平台侧更窄</h3>
+
+    <p>平台侧也会有一层迟滞死区（用来抑制抖动导致的告警反复触发）。两条死区叠在一起，就会出现一个隐蔽的矛盾：</p>
+
+    <blockquote>边缘死区 ≤ 平台死区 / 3</blockquote>
+
+    <p>为什么是三分之一而不是「边缘更小就行」？因为两侧的判据粒度天生不对称：边缘按自己的点表判「变了没有」，平台按自己的迟滞逻辑判「要不要报」，中间还隔着一次映射。如果边缘放得比平台还宽，就会出现「边缘觉得没变所以不发、平台因为没收到所以判不出来」的盲区——数据没丢，但告警没了。</p>
+
+    <p>这也解释了一个我们最终放弃的方案：<strong>不在平台侧再配一层死区</strong>。边缘到平台这段流量已经付掉了，平台上再怎么配也不会省任何东西，只会多一层判据、多一处不对称。</p>
+
+    <h2>六、旋钮三：周期兜底与心跳</h2>
+
+    <p>兜底的语义必须写死，否则会被所有人误读：</p>
+
+    <blockquote>
+      T 只保证「平台看到的值，陈旧度不超过 T」。<br>
+      它<b>不保证</b>能检出持续时间短于 T 的越限。
+    </blockquote>
+
+    <p>这两句话的区别经常被忽略。有人会以为「配了 30 分钟兜底，所以任何异常 30 分钟内一定会被发现」——不对。如果某个点在两次兜底之间越限又恢复，而它的死区又刚好把这次变化吞掉了，那这次越限就是不可见的。要缩短这个窗口，只能减小 T，或者减小死区。</p>
+
+    <p>心跳是另一件东西，不要和兜底混在一起：心跳只发前几个点，目的不是传数据，而是<strong>证明这个设备还活着</strong>。它的周期远小于 T（我们用的是 30 秒对 30 分钟），因为「设备失联」这件事必须比「数据陈旧」更早被发现。</p>
+
+    <h2>七、为什么是三个，而不是两个</h2>
+
+    <p>把三个旋钮摆在一起之后，很容易冒出一个念头：能不能去掉一个？答案是每个都去不掉，而且去掉哪个，坏法还不一样。</p>
+
+    <p><strong>只有变化（变位 + 死区），没有周期兜底</strong>，最直接的问题是平台分不清两种状态：这个点是真的稳定了，还是这条链路已经死了。数据流看起来完全一样——都是「没有新数据」，但一个是健康，一个是故障。除此之外还有两个更隐蔽的后果：新加的点永远没有初值（它没「变化」，所以永远不发第一条）；被死区吞掉的那次小幅越限，永远不会被发现。</p>
+
+    <p><strong>只有周期，没有变化</strong>，就是没有优化——量还是 P/T，只是被摊平了，带宽和存储一分没省。周期兜底的价值不在于「发」，而在于「底线」，它本身不产生任何节省。</p>
+
+    <p><strong>有兜底，但没有心跳</strong>，设备失联要等到下一次兜底才会暴露。而兜底间隔 T 是由「数据陈旧度」这个业务指标定的，通常是几十分钟——用它来承担「设备还活着吗」的检测，等于把故障发现延迟了几十分钟。所以心跳必须独立存在，而且周期要远小于 T。</p>
+
+    <p>换句话说，它们的职责是分开的：<strong>变位与死区负责「少发」，周期兜底负责「迟早会被看见」，心跳负责「它还活着」</strong>。前两个是成本优化，后两个是正确性保障。任何试图用一个机制同时满足两种职责的改法，最后都会在某一头翻车。</p>
+
+    <h2>八、三个旋钮会互相抵消</h2>
+
+    <p>到这里为止，三个旋钮看起来是三个独立的正交优化，各降各的。但它们不是。</p>
+
+    <p>把上送速率写出来，它只有两项：</p>
+
+    <blockquote>
+      上送速率 ≈ 变化贡献 + 兜底贡献 = r·P + P/T<br>
+      （r 是平均每点每秒的变化次数，T 是兜底间隔）
+    </blockquote>
+
+    <p>注意第二项 <code>P/T</code>：<strong>它与采集频率 f 无关</strong>。无论你把采集档位从 1 秒降到 5 秒，只要兜底间隔还是 T，每个点每 T 秒仍然必须被完整地发一遍。也就是说，<strong>降档根本省不掉兜底这一部分</strong>。</p>
+
+    <p>更麻烦的是「压缩比」这个指标本身。压缩比 = 基准速率 / 实际速率 = <code>P·f / (r·P + P/T)</code>。降档会把分子 <code>P·f</code> 直接按比例压下去，而分母里占大头的那一项（P/T）纹丝不动。结果就是：</p>
+
+    <figure>
+      <svg viewBox="0 0 880 300" role="img" aria-label="降档后绝对上送量不变，但压缩比指标变好看">
+        <line x1="70" y1="250" x2="840" y2="250" stroke="#c9cfd8" stroke-width="1"/>
+
+        <!-- 左组：1 秒档 -->
+        <rect x="150" y="60" width="70" height="190" fill="#cfd8f5" stroke="#667eea"/>
+        <text x="185" y="50" text-anchor="middle" font-size="13" fill="#2c3e50">基准 P·f</text>
+        <text x="185" y="278" text-anchor="middle" font-size="12" fill="#7f8c8d">1 秒档</text>
+
+        <rect x="240" y="205" width="70" height="45" fill="#7ee0a5" stroke="#3f9a63"/>
+        <text x="275" y="196" text-anchor="middle" font-size="13" fill="#2c3e50">实际 P/T</text>
+
+        <text x="185" y="130" text-anchor="middle" font-size="13" fill="#667eea">100%</text>
+        <text x="275" y="232" text-anchor="middle" font-size="12" fill="#2c3e50">≈ 23%</text>
+        <text x="230" y="300" text-anchor="middle" font-size="13" fill="#2c3e50">压缩比 ≈ 4.3×</text>
+
+        <!-- 右组：3 秒档 -->
+        <rect x="520" y="137" width="70" height="113" fill="#cfd8f5" stroke="#667eea"/>
+        <text x="555" y="127" text-anchor="middle" font-size="13" fill="#2c3e50">基准 P·f</text>
+        <text x="555" y="278" text-anchor="middle" font-size="12" fill="#7f8c8d">3 秒档</text>
+
+        <rect x="610" y="205" width="70" height="45" fill="#7ee0a5" stroke="#3f9a63"/>
+        <text x="645" y="196" text-anchor="middle" font-size="13" fill="#2c3e50">实际 P/T</text>
+
+        <text x="555" y="166" text-anchor="middle" font-size="13" fill="#667eea">约 1/3</text>
+        <text x="645" y="232" text-anchor="middle" font-size="12" fill="#2c3e50">≈ 23%</text>
+        <text x="600" y="300" text-anchor="middle" font-size="13" fill="#2c3e50">压缩比 ≈ 1.4×</text>
+
+        <!-- 说明 -->
+        <line x1="275" y1="228" x2="645" y2="228" stroke="#3f9a63" stroke-dasharray="5 4" stroke-width="1.5"/>
+        <text x="460" y="220" text-anchor="middle" font-size="13" fill="#3f9a63">绝对上送量没变</text>
+      </svg>
+      <figcaption>降档让「压缩比」变小（分母缩了），但绿色那部分——真正消耗带宽和存储的量——一点没降。示意图，数值仅供说明关系</figcaption>
+    </figure>
+
+    <p>这就解释了那个反直觉的结论：<strong>「降档」和「变化上送」的收益是重叠的，不能相乘</strong>。它们优化的其实是同一件事——都想让「没变化的数据不发」，而兜底的下限 <code>P/T</code> 是两者共同的、省不掉的地板。</p>
+
+    <p>我们实测过这个口径差：同一套系统，1 秒档算出来的压缩比约 <strong>30 倍</strong>，而理论上限（在变化率趋近零的极端）能到几十上百倍。这两个数差一个数量级，如果对外只报那个大的，等于把「天花板」说成了「实测」——这是容量估算里最常见的自我欺骗。</p>
+
+    <h2>九、判据：怎么知道调对了</h2>
+
+    <p>调完三个旋钮，不能只看「压缩比变好了」。我用的是一组判据，从「是否仍然满足业务」往回倒推：</p>
+
+    <ol>
+      <li><strong>检出判据</strong>：给定死区和 T，最坏情况下一次越限最多延迟多久被发现？这个数必须写进协议或者写在配置旁边，而不是靠大家心里有个数。</li>
+      <li><strong>结构判据</strong>：实际上送量里，兜底贡献占多少、变化贡献占多少？如果兜底占了八成，说明死区设得太小或者 T 太短，优化空间在死区；如果变化占了八成，说明变化率本身就高，这时候调 T 没用，该考虑降档或者换采集策略。</li>
+      <li><strong>绝对判据</strong>：只看「每秒多少点、每天多少 GB」。压缩比是相对值，会被档位放大或缩小，只有绝对量才对应账单。</li>
+    </ol>
+
+    <p>第二条是我最常用的：<strong>把上送量按「谁贡献的」拆开看</strong>，一眼就知道下一步该动哪个旋钮。只看总量，永远只能靠猜。</p>
+
+    <h2>十、边界：三件不要做的事</h2>
+
+    <ul>
+      <li><strong>不要在平台侧再配一层死区</strong>。边缘到平台这段流量已经付掉了，平台上再抑制不省任何东西，只会多一层不对称。</li>
+      <li><strong>不要给报文加「我只发了变化的」标记</strong>。下游需要的是一条完整、可覆盖的报文，而不是一条需要自己拼接的增量。降低的是发送量，不是信息完整性。</li>
+      <li><strong>不要把判定逻辑下沉到边缘</strong>。边缘可以做「变了没有」这种无状态判断，但不该承担「该不该告警」——那是有状态的、需要和其他数据一起看的决定。判断权一旦拆成两份，两边就都会有一份自己以为对的答案。</li>
+    </ul>
+
+    <p>这三条的共同点是：<strong>它们看起来都像是「顺手能优化一下」的地方，但都会把一份权威拆成两份</strong>。容量优化的边界，往往不在技术能不能做，而在做完之后，还有没有唯一的一个地方能回答「现在到底是什么状态」。</p>
+
+    <h2>下一篇</h2>
+
+    <p>这篇讲的是「少发」。但少发解决不了另一个问题：<strong>网络断了、设备重启了，这段时间的数据怎么办</strong>。下一篇进入边缘侧的可靠性——有界缓冲、序号为什么要落盘、补发为什么必须走独立 Topic，以及那个最反直觉的点：「不丢」的难点不在重发，而在于<strong>重发之后如何不被当成重复</strong>。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
