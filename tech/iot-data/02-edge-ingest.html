@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>边缘接入：怎么把每秒要发的量降下来 - IoT 高并发实时数据链路</title>
-  <meta name="description" content="决定成本的不是发得多快，而是发了多少条。变位、死区、周期兜底三个旋钮怎么配合，以及它们为什么常常互相抵消。">
+  <meta name="description" content="决定成本的不是发得多快，而是发了多少条。变位、死区、周期兜底三个旋钮怎么配合，脏数据为什么要在边缘挡住，以及它们为什么常常互相抵消。">
   <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
   <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
@@ -165,7 +165,92 @@
 
     <p>心跳是另一件东西，不要和兜底混在一起：心跳只发前几个点，目的不是传数据，而是<strong>证明这个设备还活着</strong>。它的周期远小于 T（我们用的是 30 秒对 30 分钟），因为「设备失联」这件事必须比「数据陈旧」更早被发现。</p>
 
-    <h2>七、为什么是三个，而不是两个</h2>
+    <h2>七、还有第四件事：清洗</h2>
+
+    <p>三个旋钮解决的是「变了才发」。但还有一类数据，问题不在「变没变」，而在<strong>它根本就不该发</strong>——无效值、坏质量码、超出量程的野值。这些值不代表任何真实状态，发上去只会污染下游的判断。</p>
+
+    <p>清洗的取舍只有一条：<strong>在哪一层做，成本差一个数量级</strong>。</p>
+
+    <figure>
+      <svg viewBox="0 0 880 250" role="img" aria-label="脏数据在边缘拦截与在 FEP 拦截的成本差异">
+        <defs>
+          <marker id="a3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <!-- 第一行：边缘拦截 -->
+        <text x="16" y="46" font-size="13" fill="#2c3e50">边缘拦截</text>
+        <rect x="16" y="58" width="120" height="44" rx="6" fill="#eef7f1" stroke="#3f9a63"/>
+        <text x="76" y="85" text-anchor="middle" font-size="13" fill="#2c3e50">边缘清洗</text>
+        <path d="M136,80 L186,80" stroke="#3f9a63" stroke-width="1.5" marker-end="url(#a3)"/>
+
+        <rect x="192" y="58" width="110" height="44" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="247" y="85" text-anchor="middle" font-size="12" fill="#8a9199">MQTT</text>
+        <path d="M302,80 L352,80" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a3)"/>
+        <rect x="358" y="58" width="110" height="44" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="413" y="85" text-anchor="middle" font-size="12" fill="#8a9199">FEP</text>
+        <path d="M468,80 L518,80" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a3)"/>
+        <rect x="524" y="58" width="110" height="44" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="579" y="85" text-anchor="middle" font-size="12" fill="#8a9199">Kafka</text>
+        <path d="M634,80 L684,80" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a3)"/>
+        <rect x="690" y="58" width="170" height="44" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="775" y="85" text-anchor="middle" font-size="12" fill="#8a9199">四路消费 / 存储</text>
+
+        <text x="160" y="122" font-size="12" fill="#3f9a63">脏数据在这里被挡，后面全程不花钱</text>
+
+        <!-- 第二行：FEP 拦截 -->
+        <text x="16" y="176" font-size="13" fill="#2c3e50">FEP 拦截</text>
+        <rect x="16" y="188" width="120" height="44" rx="6" fill="#fdf3f3" stroke="#d98b8b"/>
+        <text x="76" y="215" text-anchor="middle" font-size="13" fill="#2c3e50">边缘（不做）</text>
+        <path d="M136,210 L186,210" stroke="#d98b8b" stroke-width="1.5" marker-end="url(#a3)"/>
+        <rect x="192" y="188" width="110" height="44" rx="6" fill="#fdf3f3" stroke="#d98b8b"/>
+        <text x="247" y="215" text-anchor="middle" font-size="12" fill="#8a5a5a">MQTT</text>
+        <path d="M302,210 L352,210" stroke="#d98b8b" stroke-width="1.5" marker-end="url(#a3)"/>
+        <rect x="358" y="188" width="110" height="44" rx="6" fill="#fdf3f3" stroke="#d98b8b"/>
+        <text x="413" y="215" text-anchor="middle" font-size="13" fill="#8a5a5a">FEP 清洗</text>
+        <path d="M468,210 L518,210" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a3)"/>
+        <rect x="524" y="188" width="110" height="44" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="579" y="215" text-anchor="middle" font-size="12" fill="#8a9199">Kafka</text>
+        <path d="M634,210 L684,210" stroke="#d6dae3" stroke-width="1.5" marker-end="url(#a3)"/>
+        <rect x="690" y="188" width="170" height="44" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="775" y="215" text-anchor="middle" font-size="12" fill="#8a9199">四路消费 / 存储</text>
+
+        <text x="160" y="248" font-size="12" fill="#b06a6a">脏数据已经付过：上行带宽 + 接入集群 + 消息队列</text>
+      </svg>
+      <figcaption>同样一条脏数据，在边缘挡掉只损失一次判断；放到 FEP 才挡，前面那几段都已经付过钱了</figcaption>
+    </figure>
+
+    <p>一条脏数据如果在边缘被挡住，省掉的是<strong>五次成本</strong>：上行带宽、接入集群、消息队列、四路消费的 CPU、时序库的存储——以及之后所有基于这些数据的查询和告警。放到后面任何一层再挡，前面那几次都已经花掉了。这就是「清洗越靠近源头越便宜」的真正含义：它不是一个优化技巧，而是<strong>成本结构本身</strong>。</p>
+
+    <h3>但清洗 ≠ 归一 ≠ 判定</h3>
+
+    <p>「放边缘最便宜」不等于「全都放边缘」。这三个词经常被混在一起，实际上归属完全不同：</p>
+
+    <table>
+      <thead>
+        <tr><th>做什么</th><th>例子</th><th>该放哪</th><th>为什么</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>清洗</strong></td><td>非法值、坏质量码、单位换算与标定校正、零点漂移</td><td><strong>边缘</strong></td><td>无状态、逐点可判；标定是现场属性，越早上送越省带宽</td></tr>
+        <tr><td><strong>归一</strong></td><td>原厂点号 → 平台测点 ID</td><td><strong>FEP</strong></td><td>依赖平台配置，放边缘意味着改一次模型要动上万台设备</td></tr>
+        <tr><td><strong>判定</strong></td><td>越限、变化率、双点不一致</td><td><strong>平台</strong></td><td>有状态、需要跨数据和时间窗看</td></tr>
+      </tbody>
+    </table>
+
+    <p>判断标准其实很简单：<strong>这条规则需不需要「知道别的数据」</strong>。不需要——放边缘；需要平台配置才能算——放 FEP；需要历史和上下文——放平台。</p>
+
+    <h3>一个具体的坑：丢掉，还是标记？</h3>
+
+    <p>清洗最容易被做错的地方不是「判得准不准」，而是<strong>判完之后怎么办</strong>。</p>
+
+    <p>直觉做法是把可疑值丢掉——既然不可信，不发就行了。但这样下游会失去一个重要区分：<strong>「没有数据」和「有数据但不可信」是两件事</strong>。前者可能是断线，后者可能是传感器故障，处置方式完全不同。丢掉之后，两者在下游眼里长得一模一样。</p>
+
+    <p>正确做法是<strong>保留并打上质量标记</strong>，让判定层知道「这个点在坏质量状态，不要拿它做判断，但要把这个状态说出来」。我们还试过一个看起来更省事的替代方案：坏质量时喂「上一帧的值」给规则——结果对变化率类规则直接算错，因为值没变，它会得出「速率 = 0 ⇒ 已回落」，而坏质量根本不该判回落。</p>
+
+    <p>这个坑的教训是：<strong>清洗的输出不该是「有」或「没有」，而应该是「值 + 它的可信度」</strong>。少一个维度，下游就得靠猜。</p>
+
+    <h2>八、上送规则为什么必须是三个</h2>
 
     <p>把三个旋钮摆在一起之后，很容易冒出一个念头：能不能去掉一个？答案是每个都去不掉，而且去掉哪个，坏法还不一样。</p>
 
@@ -177,7 +262,7 @@
 
     <p>换句话说，它们的职责是分开的：<strong>变位与死区负责「少发」，周期兜底负责「迟早会被看见」，心跳负责「它还活着」</strong>。前两个是成本优化，后两个是正确性保障。任何试图用一个机制同时满足两种职责的改法，最后都会在某一头翻车。</p>
 
-    <h2>八、三个旋钮会互相抵消</h2>
+    <h2>九、三个旋钮会互相抵消</h2>
 
     <p>到这里为止，三个旋钮看起来是三个独立的正交优化，各降各的。但它们不是。</p>
 
@@ -231,7 +316,7 @@
 
     <p>我们实测过这个口径差：同一套系统，1 秒档算出来的压缩比约 <strong>30 倍</strong>，而理论上限（在变化率趋近零的极端）能到几十上百倍。这两个数差一个数量级，如果对外只报那个大的，等于把「天花板」说成了「实测」——这是容量估算里最常见的自我欺骗。</p>
 
-    <h2>九、判据：怎么知道调对了</h2>
+    <h2>十、判据：怎么知道调对了</h2>
 
     <p>调完三个旋钮，不能只看「压缩比变好了」。我用的是一组判据，从「是否仍然满足业务」往回倒推：</p>
 
@@ -243,7 +328,7 @@
 
     <p>第二条是我最常用的：<strong>把上送量按「谁贡献的」拆开看</strong>，一眼就知道下一步该动哪个旋钮。只看总量，永远只能靠猜。</p>
 
-    <h2>十、边界：三件不要做的事</h2>
+    <h2>十一、边界：三件不要做的事</h2>
 
     <ul>
       <li><strong>不要在平台侧再配一层死区</strong>。边缘到平台这段流量已经付掉了，平台上再抑制不省任何东西，只会多一层不对称。</li>
