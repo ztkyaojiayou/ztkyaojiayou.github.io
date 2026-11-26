@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IoT 实时数据链路 - 系列文章</title>
+  <meta name="description" content="亿级报文从边缘采集到时序存储的分层设计：变化上送、四路消费、保序与容量账。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css">
+  <link rel="stylesheet" href="../../styles/blog-style.css">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- ===== 页面 Hero ===== -->
+  <section class="page-hero">
+    <div class="hero-content">
+      <h1>IoT 实时数据链路</h1>
+      <p class="subtitle">亿级报文从边缘采集到时序存储的分层设计</p>
+    </div>
+  </section>
+
+  <!-- ===== 文章列表 ===== -->
+  <section class="blog-post">
+    <div class="container">
+      <div class="article-list">
+
+        <div class="intro">
+          <p>本系列拆解一条规模化实时链路——从边缘变化上送、消息分区保序，到多路独立消费与时序存储的冷热分层。每一层只讲三件事：<strong>它解决什么问题</strong>、<strong>不这么做会怎样</strong>、<strong>付出了什么代价</strong>。</p>
+          <ul>
+            <li>边缘采集：变化上送与断点续传</li>
+            <li>消息层：分区键选择与保序</li>
+            <li>消费层：多路独立消费与差异化幂等</li>
+            <li>存储层：时序入库、降采样与冷热分层</li>
+          </ul>
+          <p>目标是：把「能收上来」做成「收得稳、查得到、算得清」。</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 1 篇：亿级报文链路的分层设计</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">接入、消费、告警、存储四层各自解决什么问题，为什么不能合并成一层。</p>
+          <p class="highlight">👉 核心观点：每一层都该有独立的失败模式</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 2 篇：变化上送与断点续传</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">用「变化才发」把点率降一个数量级，用断点续传补回断链期间的空洞。</p>
+          <p class="highlight">👉 核心观点：少发比发得快更有效</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 3 篇：多路独立消费——解耦、保序与差异化幂等</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">为什么同一份报文要拆成多路消费，分区键怎么选，各路幂等策略为什么必须不同。</p>
+          <p class="highlight">👉 核心观点：一类数据一种节奏</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 4 篇：时序存储的容量账与冷热分层</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">先算体积与写放大，再谈降采样和分层；以及什么时候该换索引而不是换数据库。</p>
+          <p class="highlight">👉 核心观点：算不清的容量，测出来也不算数</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>

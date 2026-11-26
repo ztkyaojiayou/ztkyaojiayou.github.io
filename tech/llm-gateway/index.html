@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 网关与 Agent 工程 - 系列文章</title>
+  <meta name="description" content="内部大模型网关的设计取舍：多副本一致性、成本归属、流式链路与可观测。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css">
+  <link rel="stylesheet" href="../../styles/blog-style.css">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- ===== 页面 Hero ===== -->
+  <section class="page-hero">
+    <div class="hero-content">
+      <h1>AI 网关与 Agent 工程</h1>
+      <p class="subtitle">内部大模型网关的设计取舍与工程落地</p>
+    </div>
+  </section>
+
+  <!-- ===== 文章列表 ===== -->
+  <section class="blog-post">
+    <div class="container">
+      <div class="article-list">
+
+        <div class="intro">
+          <p>把多厂商模型收敛成一个入口之后，真正的工作才开始：认证、配额、成本、容灾、可观测这些「平台能力」怎么落地；多副本部署之后，哪些语义会悄悄失真。本系列以此为主线，讲取舍，也讲被否掉的方案。</p>
+          <ul>
+            <li>统一接入：协议兼容与准入治理</li>
+            <li>多副本：配额、成本与 Key 状态的一致性</li>
+            <li>流式链路：超时、重试与计费边界</li>
+            <li>数据侧：用量看板与调用明细的生命周期</li>
+          </ul>
+          <p>目标是：说清楚网关的价值为什么在治理，而不在转发。</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 1 篇：内部大模型网关要解决的问题</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">为什么不是给每个团队发一个 API Key 就完了；自研与开源方案的取舍标准。</p>
+          <p class="highlight">👉 核心观点：网关的价值在治理，不在转发</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 2 篇：多副本下的配额与成本一致性</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">限流、预算、Key 状态这些「有状态语义」在多 Pod 下怎么收敛，为什么单机内存方案会失真。</p>
+          <p class="highlight">👉 核心观点：分布式不是扩容问题，是有状态语义放哪的问题</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 3 篇：流式链路的重复输出与计费</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">SSE 断开重连、首 token 之后还能不能重试、usage 怎么解析才不漏账。</p>
+          <p class="highlight">👉 核心观点：首 token 之后的重试都是事故</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 4 篇：调用明细的分区、汇总与归档</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">千万行量级的请求日志怎么让看板不扫全表，以及什么时候才真的需要分库分表。</p>
+          <p class="highlight">👉 核心观点：先有汇总结论，再谈分片</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>

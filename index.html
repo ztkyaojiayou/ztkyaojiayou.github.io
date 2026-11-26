@@ -7,190 +7,8 @@
   <meta name="description" content="5 年后端开发，专注 AI 网关与模型接入治理、高并发数据链路与分布式系统，深耕新能源电力 IoT、SaaS 与 Agent 场景。">
   <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
   <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
-  <style>
-    /* ===== 全局 ===== */
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    html { scroll-behavior: smooth; }
-
-    body {
-      font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      line-height: 1.6;
-      color: #333;
-    }
-
-    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
-
-    /* ===== 导航栏 ===== */
-    .navbar {
-      position: fixed;
-      top: 0;
-      width: 100%;
-      background: rgba(255, 255, 255, 0.95);
-      backdrop-filter: blur(10px);
-      z-index: 1000;
-      padding: 1rem 0;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-    }
-
-    .nav-container {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 20px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .nav-logo a { font-size: 1.5rem; font-weight: 700; color: #2c3e50; text-decoration: none; }
-
-    .nav-menu { display: flex; list-style: none; gap: 2rem; }
-    .nav-menu a { text-decoration: none; color: #333; font-weight: 500; transition: color 0.3s ease; }
-    .nav-menu a:hover { color: #667eea; }
-
-    /* ===== 首屏 Hero ===== */
-    .hero {
-      min-height: 100vh;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      text-align: center;
-      padding: 120px 24px 72px;
-    }
-
-    .hero-content h1 { font-size: 4rem; margin-bottom: 1rem; }
-    .hero-content h2 { font-size: 2rem; margin-bottom: 1rem; font-weight: 500; }
-    .hero-content p { font-size: 1.2rem; margin-bottom: 1rem; opacity: 0.95; }
-
-    .hero-buttons { margin-top: 2rem; }
-
-    .btn {
-      display: inline-block;
-      padding: 12px 30px;
-      text-decoration: none;
-      border-radius: 50px;
-      font-weight: 500;
-      transition: all 0.3s ease;
-      margin: 0 10px;
-      border: 2px solid transparent;
-    }
-
-    .btn-primary { background-color: #667eea; color: white; }
-    .btn-primary:hover { background-color: #5a6fd6; transform: translateY(-2px); }
-
-    .btn-secondary { background-color: transparent; color: white; border-color: white; }
-    .btn-secondary:hover { background-color: white; color: #667eea; transform: translateY(-2px); }
-
-    /* ===== 通用区块 ===== */
-    section { padding: 100px 0; }
-    section.alt { background-color: #f8f9fa; }
-
-    h2 {
-      text-align: center;
-      font-size: 2.5rem;
-      margin-bottom: 3rem;
-      color: #2c3e50;
-    }
-
-    /* ===== 关于我 ===== */
-    .about-content {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 4rem;
-      align-items: center;
-    }
-
-    .about-text p { font-size: 1.1rem; margin-bottom: 1.5rem; line-height: 1.8; color: #444; }
-
-    .about-image img {
-      width: 100%;
-      border-radius: 10px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-    }
-
-    /* ===== 技术能力卡片 ===== */
-    .skills-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 2rem;
-      max-width: 800px;
-      margin: 0 auto;
-    }
-
-    .skill-card {
-      background: white;
-      border-radius: 10px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
-      padding: 2rem;
-      text-align: center;
-      min-height: 200px;
-      transition: transform 0.3s ease, box-shadow 0.3s ease;
-    }
-
-    .skill-card:hover { transform: translateY(-10px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18); }
-    .skill-card h3 { margin-bottom: 1rem; font-weight: 700; color: #2c3e50; font-size: 1.5rem; }
-    .skill-card p { font-size: 1rem; color: #7f8c8d; line-height: 1.6; }
-
-    /* ===== 成功案例 ===== */
-    .works-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 2rem;
-    }
-
-    .work-card {
-      background: white;
-      border-radius: 10px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
-      padding: 2rem;
-      transition: transform 0.3s ease, box-shadow 0.3s ease;
-    }
-
-    .work-card:hover { transform: translateY(-10px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18); }
-    .work-card h3 { color: #2c3e50; font-size: 1.25rem; margin-bottom: 0.25rem; }
-    .work-card .meta { font-size: 0.85rem; color: #7f8c8d; margin-bottom: 1rem; }
-    .work-card ul { padding-left: 1.2rem; }
-    .work-card li { color: #555; margin-bottom: 0.5rem; line-height: 1.6; }
-
-    /* ===== 联系咨询 ===== */
-    .contact-content {
-      max-width: 700px;
-      margin: 0 auto;
-      text-align: center;
-    }
-
-    .contact-content h3 { color: #2c3e50; margin-bottom: 1rem; }
-    .contact-content p { color: #555; }
-
-    .contact-details { margin-top: 2rem; }
-    .contact-details p { margin-bottom: 0.8rem; }
-    .contact-details a { color: #667eea; text-decoration: none; }
-    .contact-details a:hover { text-decoration: underline; }
-
-    /* ===== 页脚 ===== */
-    .footer {
-      background: #2c3e50;
-      color: white;
-      text-align: center;
-      padding: 2rem 0;
-      font-size: 0.9rem;
-    }
-
-    /* ===== 响应式 ===== */
-    @media (max-width: 768px) {
-      .nav-menu { gap: 1rem; }
-      .hero-content h1 { font-size: 2.5rem; }
-      .hero-content h2 { font-size: 1.5rem; }
-      .hero-content p { font-size: 1rem; }
-      section { padding: 60px 0; }
-      h2 { font-size: 2rem; margin-bottom: 2rem; }
-      .about-content { grid-template-columns: 1fr; gap: 2rem; }
-      .about-image { max-width: 200px; margin: 0 auto; }
-      .skills-grid { grid-template-columns: 1fr; }
-    }
-  </style>
+  <link rel="stylesheet" href="styles/styles.css">
+  <link rel="stylesheet" href="styles/blog-style.css">
 </head>
 <body>
 
@@ -202,6 +20,7 @@
         <li><a href="#about">关于我</a></li>
         <li><a href="#skills">技术能力</a></li>
         <li><a href="#works">成功案例</a></li>
+        <li><a href="#blog">技术文章</a></li>
         <li><a href="#contact">联系咨询</a></li>
       </ul>
     </div>
@@ -319,6 +138,34 @@
             <li>四层分级并发控制（CAS + DB 锁 + Redis 分布式锁 + 唯一键兜底）。</li>
             <li>PMS 挂房账先检后写 + fail-close + 对账兜底，保证跨系统最终一致。</li>
           </ul>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 技术文章 ===== -->
+  <section id="blog">
+    <div class="container">
+      <h2>技术文章</h2>
+      <div class="blog-series-grid">
+
+        <div class="blog-series-card">
+          <h3>IoT 实时数据链路</h3>
+          <p>亿级报文从边缘采集到时序存储的分层设计：变化上送、四路消费、保序与容量账，每层解决什么、付了什么代价。</p>
+          <a href="tech/iot-data/index.html" class="btn btn-blog">阅读文章</a>
+        </div>
+
+        <div class="blog-series-card">
+          <h3>AI 网关与 Agent 工程</h3>
+          <p>内部大模型网关的设计取舍：多副本下的一致性、成本归属、流式链路与可观测，以及为什么自研而不直接上开源方案。</p>
+          <a href="tech/llm-gateway/index.html" class="btn btn-blog">阅读文章</a>
+        </div>
+
+        <div class="blog-series-card">
+          <h3>架构复盘与方法论</h3>
+          <p>怎么把一次故障写成可复用的判断：根因分析、容量测算、被否清单与可验收的设计条目。</p>
+          <a href="tech/method/index.html" class="btn btn-blog">阅读文章</a>
         </div>
 
       </div>

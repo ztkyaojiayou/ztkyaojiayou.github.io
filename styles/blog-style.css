@@ -1,0 +1,167 @@
+/* ============================================================
+   技术文章专用样式
+   依赖 styles.css（导航、页脚、按钮、容器都在那边）
+   ============================================================ */
+
+/* ===== 首页系列卡片 ===== */
+.blog-series-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+}
+
+.blog-series-card {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.blog-series-card:hover { transform: translateY(-10px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18); }
+.blog-series-card h3 { color: #2c3e50; font-size: 1.25rem; margin-bottom: 0.8rem; }
+.blog-series-card p { color: #555; line-height: 1.7; flex: 1; margin-bottom: 1.5rem; }
+
+.btn-blog {
+  align-self: flex-start;
+  margin: 0;
+  padding: 10px 24px;
+  font-size: 0.95rem;
+  background-color: #667eea;
+  color: white;
+}
+
+.btn-blog:hover { background-color: #5a6fd6; transform: translateY(-2px); }
+
+/* ===== 系列页 Hero（比首页矮一半） ===== */
+.page-hero {
+  height: 50vh;
+  min-height: 260px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  text-align: center;
+  /* 抵消 styles.css 里 section 的 100px 0 内边距 */
+  padding: 100px 24px 0;
+}
+
+.page-hero .hero-content h1 { font-size: 2.5rem; margin-bottom: 1rem; }
+
+.page-hero .hero-content .subtitle {
+  font-size: 1.2rem;
+  opacity: 0.9;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+/* ===== 文章列表 ===== */
+.blog-post { padding: 0 0 100px; }
+
+.article-list {
+  max-width: 900px;
+  margin: -40px auto 0;
+  padding: 2rem;
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  position: relative;
+  z-index: 10;
+}
+
+.article-list .intro {
+  padding: 1rem 0 2rem;
+  border-bottom: 1px solid #eee;
+  margin-bottom: 2rem;
+}
+
+.article-list .intro p { color: #555; line-height: 1.8; margin-bottom: 1rem; }
+.article-list .intro ul { padding-left: 1.4rem; margin-bottom: 1rem; }
+.article-list .intro li { color: #555; line-height: 1.8; }
+
+.article-item {
+  padding: 1.5rem 0;
+  border-bottom: 1px solid #f0f0f0;
+  transition: all 0.3s ease;
+}
+
+.article-item:hover {
+  background: #f8f9ff;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  margin: 0 -1rem;
+  border-radius: 8px;
+}
+
+.article-item:last-child { border-bottom: none; }
+
+.article-item h3 { color: #2c3e50; font-size: 1.3rem; margin-bottom: 0.5rem; }
+.article-item h3 a { color: inherit; text-decoration: none; }
+.article-item h3 a:hover { color: #667eea; }
+
+.article-item .meta { font-size: 0.9rem; color: #7f8c8d; margin-bottom: 0.8rem; }
+.article-item .desc { color: #555; line-height: 1.7; margin-bottom: 0.5rem; }
+
+.article-item .highlight {
+  font-style: italic;
+  color: #667eea;
+  padding-left: 1rem;
+  border-left: 3px solid #667eea;
+  margin-top: 0.8rem;
+}
+
+.article-item.disabled { opacity: 0.6; }
+.article-item.disabled h3 a { cursor: not-allowed; }
+
+.article-item .tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #667eea;
+  color: white;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  margin-left: 0.5rem;
+}
+
+/* ===== 正文页（第 1 篇真文章时启用） ===== */
+.post-body { max-width: 800px; margin: 0 auto; padding: 3rem 20px 100px; }
+.post-body h1 { font-size: 2rem; color: #2c3e50; margin-bottom: 0.5rem; }
+.post-body .post-meta { color: #7f8c8d; font-size: 0.9rem; margin-bottom: 2rem; }
+.post-body h2 { font-size: 1.5rem; text-align: left; margin: 2.5rem 0 1rem; }
+.post-body h3 { font-size: 1.2rem; color: #2c3e50; margin: 2rem 0 0.8rem; }
+.post-body p { color: #444; line-height: 1.9; margin-bottom: 1.2rem; }
+.post-body ul, .post-body ol { padding-left: 1.6rem; margin-bottom: 1.2rem; }
+.post-body li { color: #444; line-height: 1.9; margin-bottom: 0.5rem; }
+.post-body code {
+  background: #f4f5f7;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.post-body pre {
+  background: #2c3e50;
+  color: #eaecef;
+  padding: 1.2rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-bottom: 1.4rem;
+}
+.post-body pre code { background: none; padding: 0; color: inherit; }
+.post-body blockquote {
+  border-left: 3px solid #667eea;
+  padding-left: 1rem;
+  color: #555;
+  margin-bottom: 1.4rem;
+}
+.post-body a { color: #667eea; }
+
+/* ===== 响应式 ===== */
+@media (max-width: 768px) {
+  .page-hero { height: auto; min-height: auto; padding: 100px 20px 60px; }
+  .page-hero .hero-content h1 { font-size: 1.8rem; }
+  .article-list { margin: -30px 1rem 0; padding: 1.5rem; }
+  .blog-post { padding-bottom: 60px; }
+}
