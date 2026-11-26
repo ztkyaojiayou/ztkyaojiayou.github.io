@@ -40,42 +40,72 @@
       <div class="article-list">
 
         <div class="intro">
-          <p>本系列拆解一条规模化实时链路——从边缘变化上送、消息分区保序，到多路独立消费与时序存储的冷热分层。每一层只讲三件事：<strong>它解决什么问题</strong>、<strong>不这么做会怎样</strong>、<strong>付出了什么代价</strong>。</p>
+          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>的完整链路。八篇按数据的流向排列：边缘怎么少发、断了怎么补、FEP 怎么归一、消息怎么保序、四路怎么消费、存储怎么算账，最后是怎么标定每一层的上限。</p>
           <ul>
-            <li>边缘采集：变化上送与断点续传</li>
-            <li>消息层：分区键选择与保序</li>
-            <li>消费层：多路独立消费与差异化幂等</li>
-            <li>存储层：时序入库、降采样与冷热分层</li>
+            <li>边缘：上送策略与可靠性</li>
+            <li>接入：点表翻译与去重</li>
+            <li>消息：分区键、保序与压缩</li>
+            <li>消费：四路解耦与差异化幂等</li>
+            <li>存储：容量账、元数据墙与分层</li>
+            <li>标定：压测与瓶颈迁移</li>
           </ul>
-          <p>目标是：把「能收上来」做成「收得稳、查得到、算得清」。</p>
+          <p>建议<strong>按顺序读</strong>——每一篇都建立在上一篇的结论上：先有「少发」才有后面的容量账，先有「保序」才谈得上消费侧的幂等。目标是讲透「高并发 IoT 数据链路」这一整条线，而不是罗列若干个知识点。</p>
         </div>
 
         <div class="article-item">
           <h3><a href="01-architecture.html">第 1 篇：亿级报文链路的分层设计</a></h3>
-          <div class="meta">2026-11</div>
-          <p class="desc">接入、消费、告警、存储四层各自解决什么问题，为什么不能合并成一层。</p>
+          <div class="meta">2026-11 · 已发布</div>
+          <p class="desc">为什么要分层、四层各自负责哪一件会失败的事，以及一批看起来很合理却被否掉的方案。</p>
           <p class="highlight">👉 核心观点：每一层都该有独立的失败模式</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 2 篇：变化上送与断点续传</a></h3>
+          <h3><a>第 2 篇：边缘接入——怎么把每秒要发的量降下来</a></h3>
           <div class="meta">即将发布</div>
-          <p class="desc">用「变化才发」把点率降一个数量级，用断点续传补回断链期间的空洞。</p>
+          <p class="desc">变位、死区、周期兜底三类规则怎么配合；死区为什么必须小于平台侧；压缩比的天花板与地板。</p>
           <p class="highlight">👉 核心观点：少发比发得快更有效</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 3 篇：多路独立消费——解耦、保序与差异化幂等</a></h3>
+          <h3><a>第 3 篇：边缘侧可靠性——断网、重启之后怎么保证不丢</a></h3>
           <div class="meta">即将发布</div>
-          <p class="desc">为什么同一份报文要拆成多路消费，分区键怎么选，各路幂等策略为什么必须不同。</p>
-          <p class="highlight">👉 核心观点：一类数据一种节奏</p>
+          <p class="desc">有界缓冲、序号落盘、有序补发与互斥；补发数据为什么要走独立 Topic。</p>
+          <p class="highlight">👉 核心观点：「不丢」的难点不在重发，在于重发之后不被当成重复</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 4 篇：时序存储的容量账与冷热分层</a></h3>
+          <h3><a>第 4 篇：FEP 前置——点表翻译该放在哪</a></h3>
           <div class="meta">即将发布</div>
-          <p class="desc">先算体积与写放大，再谈降采样和分层；以及什么时候该换索引而不是换数据库。</p>
+          <p class="desc">翻译放边缘、放平台还是单独一层；值闸、去重与攒批；三级缓存为什么需要回源。</p>
+          <p class="highlight">👉 核心观点：翻译放在哪，决定了改一次模型要动多少台设备</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 5 篇：消息层——分区键、保序与压缩</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">为什么用设备做分区键；报文率与点率差两个数量级的后果；压缩省的是落盘还是写速。</p>
+          <p class="highlight">👉 核心观点：分区键选的是「谁必须有序」，不是「怎么均匀」</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 6 篇：四路消费——解耦与差异化幂等</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">同一份数据为什么要消费四遍；为什么四路的幂等语义必须不一样。</p>
+          <p class="highlight">👉 核心观点：幂等语义跟着「重复的代价」走，不跟代码风格走</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 7 篇：时序存储——容量账、元数据墙与分层</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">为什么先做闸门再做分层；元数据墙的表象为什么是「写不进去」；降采样为什么不能回读。</p>
           <p class="highlight">👉 核心观点：算不清的容量，测出来也不算数</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 8 篇：容量与压测——怎么标定每一层的上限</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">旁路压测、自证探针、阶梯法；以及为什么「提升 48 倍」上线只兑现 3.4 倍。</p>
+          <p class="highlight">👉 核心观点：打掉一个瓶颈，得到的是下一个瓶颈</p>
         </div>
 
       </div>
