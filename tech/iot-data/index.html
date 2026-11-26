@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IoT 高并发实时数据链路 - 系列文章</title>
-  <meta name="description" content="亿级报文从边缘采集到时序存储的架构设计与工程落地。十七篇分三段：数据怎么流、告警怎么送达、系统怎么不出错。">
+  <meta name="description" content="亿级报文从边缘采集到时序存储的架构设计与工程落地。十八篇分三段：数据怎么流、告警怎么送达、系统怎么不出错。">
   <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
   <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
@@ -40,8 +40,9 @@
       <div class="article-list">
 
         <div class="intro">
-          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>与<strong>告警送达</strong>的完整链路。十七篇分三段：<strong>第一段跟一条数据走</strong>，从边缘一直走到存储；<strong>第二段跟一个告警走</strong>，从判定一直走到用户的手机；<strong>第三段横向收束</strong>，讲并发模型、端到端一致性、容量标定，以及一个容易被忽略的问题——故障为什么常常是静默的。</p>
+          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>与<strong>告警送达</strong>的完整链路。十八篇分三段：<strong>第一段跟一条数据走</strong>，从边缘一直走到存储；<strong>第二段跟一个告警走</strong>，从判定一直走到用户的手机；<strong>第三段横向收束</strong>，讲并发模型、端到端一致性、容量标定，以及一个容易被忽略的问题——故障为什么常常是静默的。</p>
           <ul>
+            <li>场景：四遥构成与量级传导</li>
             <li>边缘：上送策略与可靠性</li>
             <li>传输：为什么两段式，MQTT 与 Kafka 各管什么</li>
             <li>接入：点表翻译与去重</li>
@@ -56,119 +57,126 @@
         </div>
 
         <div class="article-item">
-          <h3><a href="01-architecture.html">第 1 篇：亿级报文链路的分层设计</a></h3>
+          <h3><a href="01-scenario.html">第 1 篇：场景与规模——这套架构到底在扛什么</a></h3>
+          <div class="meta">2026-11 · 已发布</div>
+          <p class="desc">1.2 万设备、170 万测点、秒级采集；四遥的真实构成（YC 60% / YX 30% / 其余 10%）；三类点走三条通道；量级如何一步步放大成每天 10 亿条。</p>
+          <p class="highlight">👉 核心观点：同一个规模，用「点」和用「条」看差两个数量级</p>
+        </div>
+
+        <div class="article-item">
+          <h3><a href="02-architecture.html">第 2 篇：亿级报文链路的分层设计</a></h3>
           <div class="meta">2026-11 · 已发布</div>
           <p class="desc">为什么要分层、四层各自负责哪一件会失败的事，以及一批看起来很合理却被否掉的方案。</p>
           <p class="highlight">👉 核心观点：每一层都该有独立的失败模式</p>
         </div>
 
         <div class="article-item">
-          <h3><a href="02-edge-ingest.html">第 2 篇：边缘接入——怎么把每秒要发的量降下来</a></h3>
+          <h3><a href="03-edge-ingest.html">第 3 篇：边缘接入——怎么把每秒要发的量降下来</a></h3>
           <div class="meta">2026-11 · 已发布</div>
           <p class="desc">变位、死区、周期兜底三个旋钮怎么配合；死区为什么会永久掩盖告警；清洗为什么放边缘最便宜；压缩比的天花板与地板。</p>
           <p class="highlight">👉 核心观点：少发比发得快更有效</p>
         </div>
 
         <div class="article-item">
-          <h3><a href="03-edge-reliability.html">第 3 篇：边缘侧可靠性——断网、重启之后怎么保证不丢</a></h3>
+          <h3><a href="04-edge-reliability.html">第 4 篇：边缘侧可靠性——断网、重启之后怎么保证不丢</a></h3>
           <div class="meta">2026-11 · 已发布</div>
           <p class="desc">有界缓冲、序号落盘、补发与实时互斥、独立 Topic 隔离；补发尖峰怎么不打崩下游；时间戳与对账口径；平台怎么知道设备掉线了。</p>
           <p class="highlight">👉 核心观点：「不丢」的难点不在重发，在于重发之后不被当成重复</p>
         </div>
 
         <div class="article-item">
-          <h3><a href="04-mqtt-transport.html">第 4 篇：边缘到平台的第一跳——为什么是 MQTT，不是 Kafka</a></h3>
+          <h3><a href="05-mqtt-transport.html">第 5 篇：边缘到平台的第一跳——为什么是 MQTT，不是 Kafka</a></h3>
           <div class="meta">2026-11 · 已发布</div>
           <p class="desc">长连接挂在哪里；顺序在哪一段被保证；QoS1 为什么保证不了「存得住」；过载与重连风暴时两段链路各自的坏法。</p>
           <p class="highlight">👉 核心观点：MQTT 管「接进来」，Kafka 管「存得住」——QoS 是逐跳保证，不是存储保证</p>
         </div>
 
         <div class="article-item">
-          <h3><a href="05-fep-normalize.html">第 5 篇：FEP 前置——点表翻译该放在哪</a></h3>
+          <h3><a href="06-fep-normalize.html">第 6 篇：FEP 前置——点表翻译该放在哪</a></h3>
           <div class="meta">2026-11 · 已发布</div>
           <p class="desc">翻译位置的变更半径；未映射的点为什么只能丢弃并计数；值闸的「丢弃还是标记」；三级缓存为什么需要回源；去重与攒批的位置。</p>
           <p class="highlight">👉 核心观点：翻译放在哪，决定了改一次模型要动多少台设备</p>
         </div>
 
         <div class="article-item">
-          <h3><a href="06-message-layer.html">第 6 篇：消息层——为什么必须有它，以及分区键在选什么</a></h3>
+          <h3><a href="07-message-layer.html">第 7 篇：消息层——为什么必须有它，以及分区键在选什么</a></h3>
           <div class="meta">2026-11 · 已发布</div>
           <p class="desc">消息层提供的四件事：存住、削峰、解耦、可回放；分区键与分区数怎么定；留存期与压缩的取舍；点率与报文率两个陷阱。</p>
           <p class="highlight">👉 核心观点：分区键选的是「谁必须有序」，不是「怎么均匀」</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 7 篇：DP 四路消费——解耦与差异化幂等</a></h3>
+          <h3><a>第 8 篇：DP 四路消费——解耦与差异化幂等</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">同一份数据为什么要消费四遍；为什么四路的幂等语义必须不一样。</p>
           <p class="highlight">👉 核心观点：幂等语义跟着「重复的代价」走，不跟代码风格走</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 8 篇：历史存储——时序库的容量账、元数据墙与分层</a></h3>
+          <h3><a>第 9 篇：历史存储——时序库的容量账、元数据墙与分层</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">容量账怎么算；元数据墙的表象为什么是「写不进去」；为什么先做闸门再做分层；降采样为什么不能回读。</p>
           <p class="highlight">👉 核心观点：算不清的容量，测出来也不算数</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 9 篇：实时快照——Redis 为什么是 Store 不是 Cache</a></h3>
+          <h3><a>第 10 篇：实时快照——Redis 为什么是 Store 不是 Cache</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">写失败为什么必须重投；旧批为什么能把快照拉回去；批量写为什么是红线而不是优化。</p>
           <p class="highlight">👉 核心观点：快照一旦回跳，实时性就等于没有</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 10 篇：告警判定——全量逐点判定的代价</a></h3>
+          <h3><a>第 11 篇：告警判定——全量逐点判定的代价</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">为什么判定要吃全量数据；判定状态该归谁；规则引擎真正的瓶颈在哪。</p>
           <p class="highlight">👉 核心观点：告警的难点不在规则多，而在「每个点都要看一眼」</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 11 篇：告警通知——谁该收、要不要打扰</a></h3>
+          <h3><a>第 12 篇：告警通知——谁该收、要不要打扰</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">订阅、匹配与可见性怎么决定收件人；去重、聚合、升级与免打扰的取舍。</p>
           <p class="highlight">👉 核心观点：通知链里最值钱的一步是「不打扰」</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 12 篇：推送投递——地址、渠道与不重复</a></h3>
+          <h3><a>第 13 篇：推送投递——地址、渠道与不重复</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">渠道分池隔离、Outbox、重试与去重；为什么第三方网关没有幂等键时宁可少发。</p>
           <p class="highlight">👉 核心观点：多送一条的代价，比漏送一条更高</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 13 篇：告警审计存储——分区、归档与时间锚幂等键</a></h3>
+          <h3><a>第 14 篇：告警审计存储——分区、归档与时间锚幂等键</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">分区表为什么拿不到全局唯一；时间锚幂等键怎么让它兼得；归档与删除的顺序。</p>
           <p class="highlight">👉 核心观点：分区与唯一性，可以靠改编码兼得</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 14 篇：高并发设计——哪里必须串行，哪里才该并行</a></h3>
+          <h3><a>第 15 篇：高并发设计——哪里必须串行，哪里才该并行</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">这条链路里哪些点必须串行、哪些才可以并行；背压、队列上界与路间隔离；为什么有的路加机器有用、有的加机器没用。</p>
           <p class="highlight">👉 核心观点：高并发的第一步是数清「必须串行的地方」</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 15 篇：端到端一致性——没有事务，怎么保证最终一致</a></h3>
+          <h3><a>第 16 篇：端到端一致性——没有事务，怎么保证最终一致</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">为什么这条链路不该被当成事务；每一步为什么都能重放、重放为什么无害；幂等键怎么选；死信与对账怎么兜底。</p>
           <p class="highlight">👉 核心观点：没有分布式事务，一致性靠「每一步都幂等 + 每一步可重放」</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 16 篇：容量与压测——怎么标定每一层的上限</a></h3>
+          <h3><a>第 17 篇：容量与压测——怎么标定每一层的上限</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">旁路压测、自证探针、阶梯法；以及为什么「提升 48 倍」上线只兑现 3.4 倍。</p>
           <p class="highlight">👉 核心观点：打掉一个瓶颈，得到的是下一个瓶颈</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 17 篇：静默失败——故障为什么看不见，怎么让它可见</a></h3>
+          <h3><a>第 18 篇：静默失败——故障为什么看不见，怎么让它可见</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">进程健康、接口 200、账本已完成，数据却是错的：静默失败的几种典型形态，以及每一层该对什么账。</p>
           <p class="highlight">👉 核心观点：让系统知道自己坏了，比让它不坏更难</p>

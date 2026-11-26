@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>场景与规模：这套架构到底在扛什么 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="1.2 万台设备、170 万测点、秒级上送。先看清楚真实的测点分布与上送方式，后面每一层的设计才有落点。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>场景与规模——这套架构到底在扛什么</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 1 篇</div>
+
+    <div class="takeaway">
+      <p>这套链路的设计背景是：<strong>1.2 万台设备、60–120 个场站、170 万个测点、秒级采集</strong>。若全部按秒级全量上送，就是每秒 170 万个点——这个数不是想象出来的压力，是容量规划的上界。</p>
+      <p>但只记住「170 万」是不够的：这 170 万个点<strong>不是一类东西</strong>。读懂它们的构成，才知道为什么后面的设计会分成四种节奏、三条通道。</p>
+    </div>
+
+    <p><em>说明：本文数字来自该链路的容量设计口径，用于说明量级与换算关系。</em></p>
+
+    <h2>一、先说规模，再说架构</h2>
+
+    <p>技术文章有个常见的写法：先讲趋势、再讲架构。这套系列想反过来——先把最硬的数字摆出来，因为后面每一篇的设计决定，本质上都是在回答这组数字。</p>
+
+    <table>
+      <thead>
+        <tr><th>维度</th><th>设计口径</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>场站规模</td><td>60–120 个场站</td></tr>
+        <tr><td>设备规模</td><td>约 1.2 万台</td></tr>
+        <tr><td>测点总数</td><td>约 170 万个</td></tr>
+        <tr><td>采集周期</td><td>秒级（1s / 3s / 5s 混跑）</td></tr>
+        <tr><td>全量上送速率</td><td>约 <strong>170 万点/秒</strong>（全 1s 的容量上界）</td></tr>
+        <tr><td>报文速率</td><td>约 <strong>1.2 万条/秒</strong>（峰值）</td></tr>
+        <tr><td>日报文量</td><td>日均约 7 亿条，峰值 10 亿条</td></tr>
+      </tbody>
+    </table>
+
+    <p>第一个要澄清的概念是：<strong>「170 万点/秒」是容量上界，不是常态</strong>。它对应的是「所有测点都按 1 秒周期全量上送」这个最坏假设。真实运行中，现场是 1s / 3s / 5s 混跑的——关键量走 1 秒，其余走 3 秒或 5 秒。</p>
+
+    <p>为什么还要按最坏情况设计？因为采集周期是可以被现场调整的。今天跑 3 秒的设备，明天可能因为客户要求改成 1 秒。<strong>架构必须能在不改代码的前提下承受这个变化</strong>——否则每次现场调档，都是一次容量事故。</p>
+
+    <h2>二、170 万个点，不是一类东西</h2>
+
+    <p>这是读懂后面所有设计的关键一步。工业现场的测点分成四类，行话叫「四遥」：</p>
+
+    <ul>
+      <li><strong>遥测（YC）</strong>：连续量，比如温度、功率、风速、电量；</li>
+      <li><strong>遥信（YX）</strong>：开关量，比如断路器分合、保护动作、远方就地；</li>
+      <li><strong>遥控（YK）</strong>：下行控制命令，比如分闸、合闸；</li>
+      <li><strong>遥调（YT）</strong>：下行调节设定值，比如功率目标。</li>
+    </ul>
+
+    <p>它们的比例不是均等的。按这条链路的容量口径：</p>
+
+    <figure>
+      <svg viewBox="0 0 880 200" role="img" aria-label="四遥测点构成比例">
+        <text x="20" y="28" font-size="13" fill="#2c3e50">170 万测点的构成</text>
+
+        <!-- 条形图 -->
+        <rect x="20" y="48" width="476" height="46" fill="#7aa2f7"/>
+        <rect x="496" y="48" width="238" height="46" fill="#7ee0a5"/>
+        <rect x="734" y="48" width="80" height="46" fill="#d9d9e3"/>
+
+        <text x="258" y="78" text-anchor="middle" font-size="15" fill="#fff">YC 遥测 · 60%（约 102 万）</text>
+        <text x="615" y="78" text-anchor="middle" font-size="14" fill="#1f5b3a">YX 遥信 · 30%（约 51 万）</text>
+        <text x="774" y="78" text-anchor="middle" font-size="12" fill="#555">其余 10%</text>
+
+        <!-- 说明 -->
+        <text x="20" y="128" font-size="12" fill="#2c3e50">YC：连续量，周期上送</text>
+        <text x="20" y="150" font-size="12" fill="#2c3e50">YX：开关量，变位为主</text>
+        <text x="20" y="172" font-size="12" fill="#2c3e50">其余：遥控 / 遥调 / 事件 / SOE</text>
+
+        <text x="480" y="128" font-size="12" fill="#8a9199">唯一决定时序写速率的量</text>
+        <text x="480" y="150" font-size="12" fill="#8a9199">走事件通道，不进周期批</text>
+        <text x="480" y="172" font-size="12" fill="#8a9199">下行命令，本来就不在上送链路上</text>
+      </svg>
+      <figcaption>四遥构成：遥测与遥信合计九成，但它们走的是完全不同的上送通道</figcaption>
+    </figure>
+
+    <p>这个比例带来的第一个结论是反直觉的：<strong>「测点数」并不是衡量压力的正确单位</strong>。170 万测点里，真正每秒都要写进时序库的，是那 102 万个遥测点；51 万个遥信点绝大部分时间什么也不发；剩下 10% 根本不往上走。</p>
+
+    <p>再往细里看，每一类还有自己的麻烦：</p>
+
+    <ul>
+      <li><strong>遥测的麻烦是「噪声」</strong>。温度、风速这类连续量天然在小幅抖动，如果每个细微变化都上报，几乎等于全量上送。所以要靠死区抑制——但死区又不能设得太大，否则会把「缓慢但确实越限」的情况永久掩盖掉。这是第 3 篇要展开的核心矛盾。</li>
+      <li><strong>遥信的麻烦是「抖动」</strong>。开关量最怕的不是不报，而是反复跳变：一次故障可能在几秒内产生几十次分合记录，如果照单全收，下游会被瞬间打爆。所以变位上送必须配防抖，而防抖窗口又会影响故障录波的完整性。</li>
+      <li><strong>遥控遥调的麻烦不在量，而在安全</strong>。它们是下行命令，一旦出错就是物理后果。所以这类数据根本不进"上送压力"这个问题域——但它们决定了链路必须存在一条可靠的反向通道。</li>
+    </ul>
+
+    <p>换句话说，四遥不是四个统计口径，而是<strong>四种完全不同的数据性格</strong>。把它们混在一起谈「平均每秒多少点」，等于什么都没说。</p>
+
+    <h2>三、现场长什么样：场站、设备与测点</h2>
+
+    <p>「1.2 万台设备」听起来像一个大数，但它其实是一个很具体的结构：60 到 120 个场站，每个场站一百到两百台设备，每台设备平均一百四十多个测点。</p>
+
+    <p>这个三层结构决定了后面很多设计：</p>
+
+    <ul>
+      <li><strong>场站是运维单位</strong>。告警按场站聚合、权限按场站划分、补发也常常是按场站整片发生（比如站内汇聚设备重启）。</li>
+      <li><strong>设备是有序单位</strong>。同一台设备的帧必须按顺序处理——这是后面「分区键选设备」这条决定的业务来源。</li>
+      <li><strong>测点是计量单位</strong>。容量、带宽、存储，最后都要落到测点上。</li>
+    </ul>
+
+    <p>还要注意一点：<strong>不同类型设备的测点数差别很大</strong>。风机、逆变器、储能电池簇的测点密度完全不同，从几十点到几百点不等——所以「平均 140 点/台」只是一个总体口径，真实的分布是长尾的。做容量规划时按平均值算总数没问题，但按平均值去设计单设备处理逻辑就会出问题。</p>
+
+    <h2>四、三类点，三条通道</h2>
+
+    <p>这是这套架构里最基础的一个分流决定，也是后面好几篇文章的地基：</p>
+
+    <table>
+      <thead>
+        <tr><th>测点类型</th><th>上送方式</th><th>去哪</th><th>为什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>YC 遥测</strong>（60%）</td>
+          <td>周期上送（1s/3s/5s），配合死区抑制</td>
+          <td>时序写入</td>
+          <td>连续量需要"曲线"，必须按周期留痕</td>
+        </tr>
+        <tr>
+          <td><strong>YX 遥信</strong>（30%）</td>
+          <td>变位上送为主 + 低频心跳/全扫</td>
+          <td>事件通道</td>
+          <td>开关量只有状态翻转才产生信息，周期上送纯属浪费</td>
+        </tr>
+        <tr>
+          <td><strong>遥控 / 遥调 / SOE</strong>（10%）</td>
+          <td>下行命令，或事件记录</td>
+          <td>不进周期批</td>
+          <td>它们不是"采样数据"，混进周期流会污染时序口径</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>三条通道的差异不只是"发到不同的地方"，而是<strong>三种完全不同的节奏</strong>：</p>
+
+    <ul>
+      <li><strong>遥测</strong>是恒定速率的水流——每秒都有一百万个点等着被写进去；</li>
+      <li><strong>遥信</strong>是稀疏的脉冲——平时一声不响，一旦动作，几十个点会在同一秒内集中上报；</li>
+      <li><strong>遥控遥调</strong>是下行——它们根本不在"上送压力"这个问题里。</li>
+    </ul>
+
+    <p>这三种节奏没法用同一套策略伺候。这也是后面第 7 篇要讲的「四路消费」的根本原因：不是设计者喜欢拆，而是数据的节奏本来就不一样。</p>
+
+    <h2>五、量级是怎么一步步放大出来的</h2>
+
+    <p>把上面所有数字串起来，就得到一条完整的传导链：</p>
+
+    <figure>
+      <svg viewBox="0 0 900 170" role="img" aria-label="从设备到日数据量的换算链">
+        <defs>
+          <marker id="a1c" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <rect x="8" y="55" width="136" height="62" rx="8" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="76" y="82" text-anchor="middle" font-size="14" fill="#2c3e50">1.2 万设备</text>
+        <text x="76" y="102" text-anchor="middle" font-size="11" fill="#7f8c8d">平均约 140 点/台</text>
+
+        <path d="M144,86 L186,86" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a1c)"/>
+
+        <rect x="192" y="55" width="140" height="62" rx="8" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="262" y="82" text-anchor="middle" font-size="14" fill="#2c3e50">170 万测点</text>
+        <text x="262" y="102" text-anchor="middle" font-size="11" fill="#7f8c8d">YC 60% / YX 30%</text>
+
+        <path d="M332,86 L374,86" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a1c)"/>
+
+        <rect x="380" y="48" width="160" height="76" rx="8" fill="#fdf3f3" stroke="#d98b8b"/>
+        <text x="460" y="76" text-anchor="middle" font-size="14" fill="#8a5a5a">170 万点/秒</text>
+        <text x="460" y="96" text-anchor="middle" font-size="11" fill="#b06a6a">全 1s 上界</text>
+        <text x="460" y="114" text-anchor="middle" font-size="11" fill="#b06a6a">（常态按 1s/3s 混跑低）</text>
+
+        <path d="M540,86 L582,86" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a1c)"/>
+        <text x="561" y="76" text-anchor="middle" font-size="11" fill="#7f8c8d">÷142</text>
+
+        <rect x="588" y="55" width="140" height="62" rx="8" fill="#eef7f1" stroke="#3f9a63"/>
+        <text x="658" y="82" text-anchor="middle" font-size="14" fill="#2c3e50">1.2 万条/秒</text>
+        <text x="658" y="102" text-anchor="middle" font-size="11" fill="#7f8c8d">报文速率上限</text>
+
+        <path d="M728,86 L770,86" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a1c)"/>
+        <text x="749" y="76" text-anchor="middle" font-size="11" fill="#7f8c8d">×86400</text>
+
+        <text x="836" y="76" text-anchor="middle" font-size="14" fill="#2c3e50">10 亿条/天</text>
+        <text x="836" y="98" text-anchor="middle" font-size="11" fill="#7f8c8d">峰值（日均 7 亿）</text>
+      </svg>
+      <figcaption>同一条链路，用「点」和用「条」两个单位看，差两个数量级</figcaption>
+    </figure>
+
+    <p>这里有一个换算关系，后面每一篇都会用到：</p>
+
+    <blockquote>
+      点率 ÷ 报文率 = 一条报文里的测点数 ≈ 142
+    </blockquote>
+
+    <p>因为一条报文装的是「一台设备、一次采集、它的全部测点」，所以这两个量纲天生差两个数量级。<strong>任何关于吞吐、分区数、批量大小、存储体积的估算，只要搞错用的是哪一个，结论就会偏一到两个数量级</strong>——而且不会报错，只会让你在上线那天发现机器不够。</p>
+
+    <h3>日均和峰值，是两个用途的数</h3>
+
+    <p>表里同时有「日均 7 亿条」和「峰值 10 亿条」。它们不是同一个数的不同精度，而是两个不同用途：</p>
+
+    <ul>
+      <li><strong>峰值决定容量</strong>。机器要按最高那一段配，否则高峰期就是排队和超时。</li>
+      <li><strong>均值决定成本</strong>。云上按量计费时，账单是按累计算的，跟你的峰值没关系。</li>
+    </ul>
+
+    <p>峰值比均值高四成左右，这个差距主要来自现场行为而不是随机波动：批量点表下发后的集中上报、断网恢复时的补发、以及采集周期被临时调密。这些都不难理解，但它们意味着<strong>「平均负载」永远不该拿来当容量依据</strong>。</p>
+
+    <h3>再往下换算一层：存储</h3>
+
+    <p>报文落到存储层会展开成点。按全 1s 上界算：</p>
+
+    <blockquote>
+      170 万点/秒 × 86400 秒 ≈ 每日 1400 亿个数据点
+    </blockquote>
+
+    <p>如果只看遥测这一部分（占 60%），大约 880 亿点/天。按每个点几十字节的原始体积估算，一天的原始数据就是 TB 级的规模——三年就是千 TB。</p>
+
+    <p>这就是为什么第 9 篇会花整整一节讲「先算容量账，再谈分层」：<strong>存储的成本不是线性增长的，它会被索引、副本、写放大乘以好几倍</strong>。而所有这一切的起点，就是上面这个换算。</p>
+
+    <h2>六、为什么周期是 1s / 3s / 5s 混跑</h2>
+
+    <p>一个自然的疑问：既然按「全 1s」的最坏情况设计，为什么不干脆全部跑 1 秒，省得算两套？</p>
+
+    <p>因为采集周期不是纯技术参数，它同时是<strong>成本和业务价值的分界线</strong>：</p>
+
+    <table>
+      <thead>
+        <tr><th>周期</th><th>给谁</th><th>理由</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>1 秒</strong></td><td>关键量：功率、关键温度、越限敏感点</td><td>故障判定的时间尺度就在秒级，慢了就没有意义</td></tr>
+        <tr><td><strong>3 秒</strong></td><td>大多数一般测点</td><td>变化本身就不快，1 秒采一次得到的全是噪声</td></tr>
+        <tr><td><strong>5 秒</strong></td><td>慢变量：累计电量、统计类</td><td>十分钟才动一次的量，5 秒已经过量</td></tr>
+      </tbody>
+    </table>
+
+    <p>全跑 1 秒的代价是线性的：170 万点/秒 对 56 万点/秒，差三倍带宽、三倍写入、三倍存储。而收益几乎为零——因为大部分测点本来就没什么可看的。</p>
+
+    <p>但这里有个架构上的要求：<strong>周期的选择权在现场，不在平台</strong>。客户今天要求某批设备改 1 秒，明天可能扩到全场站。所以平台的容量设计必须按<strong>上界</strong>做，而运行成本按<strong>实际混跑</strong>摊。这就是为什么表里同时出现「170 万点/秒（上界）」和「日均 7 亿条（实际）」两个数——它们不是矛盾，是两个不同的用途。</p>
+
+    <h2>七、这个量级会先压垮什么</h2>
+
+    <p>按经验，从设备往上走，最先撑不住的顺序大致是固定的：</p>
+
+    <ol>
+      <li><strong>上行带宽与接入连接</strong>——170 万点/秒的原始报文，先卡在广域链路上；</li>
+      <li><strong>接入侧的解析与转发</strong>——每台设备一条长连接，解析是 CPU 密集的；</li>
+      <li><strong>消息层的分区与消费</strong>——吞吐上限由分区数封顶；</li>
+      <li><strong>时序写入</strong>——写放大在这里第一次变得致命；</li>
+      <li><strong>存储体积与查询</strong>——三年数据不是加法，是乘法。</li>
+    </ol>
+
+    <p>这个顺序很重要：它意味着<strong>优化必须从前往后做</strong>。如果源头不减量，后面每一层都只是把压力往后推，直到某一层崩溃。这也是为什么这套系列从「边缘怎么少发」讲起，而不是从「怎么把数据库调快」讲起。</p>
+
+    <h2>八、后面怎么读</h2>
+
+    <p>把这个规模记在心里之后，后面 17 篇就有了统一的坐标：</p>
+
+    <ul>
+      <li><strong>第 2 篇</strong>回答「为什么要分成四层」——因为每一层会以不同方式先崩；</li>
+      <li><strong>第 3–5 篇</strong>处理源头：怎么少发、断了怎么补、怎么接进来；</li>
+      <li><strong>第 6–8 篇</strong>处理平台入口：翻译、分区、消费；</li>
+      <li><strong>第 9–13 篇</strong>处理落点：四种存储介质与告警；</li>
+      <li><strong>第 14–18 篇</strong>横向收束：并发、一致性、容量、静默失败。</li>
+    </ul>
+
+    <p>每一篇都会回到这组数字——不是复述，而是说明<strong>那个设计到底在为哪一档压力买单</strong>。</p>
+
+    <h2>下一篇</h2>
+
+    <p>规模清楚了，接下来是一个更根本的问题：这条链路为什么必须分成四层，而不是一个服务从头做到尾？下一篇给出答案——不是「分层看起来专业」，而是<strong>每一层会以完全不同的方式失败</strong>，而混在一起你就不知道是哪一层坏了。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
