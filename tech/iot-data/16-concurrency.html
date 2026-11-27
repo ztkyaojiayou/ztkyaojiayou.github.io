@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>高并发设计：哪里必须串行，哪里才该并行 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="这条链上 12 处必须串行，七处各自在数不同的东西。加机器到底有没有用，取决于瓶颈是不是在你以为的那条轴上。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>高并发设计——哪里必须串行，哪里才该并行</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 16 篇</div>
+
+    <div class="takeaway">
+      <p>遇到瓶颈，大多数人的第一反应是加机器。但吞吐上限往往不在机器数量，而在<strong>那条最窄的串行段</strong>——我们实测过：整机只用掉 3.4/16 核，链路已经崩了。</p>
+      <p>更麻烦的是，这条链上有七处<strong>各自在数不同的东西</strong>：点/s、条/s、字节/s、事件/s、序列数、连接数、条/分钟。搞错单位，加再多机器也加错了地方。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
+
+    <h2>一、先数串行点，再谈并发</h2>
+
+    <p>前面十五篇讲的都是"某一层怎么设计"。这一篇反过来，横向看一个问题：<strong>这条链上到底哪些地方必须串行，哪些地方才可以并行？</strong></p>
+
+    <p>为什么这个问题重要？因为"并发"这个词容易让人产生一个错觉——以为把无状态服务复制几份、加个负载均衡就解决了。但这条链路不是这样：它有大量<strong>结构性单线程</strong>，不是写错了，而是业务语义要求它必须串行。</p>
+
+    <p>而串行点还有一个共同特征：<strong>它们不消耗 CPU</strong>。它们要么在等 IO，要么在保持顺序，要么在被一把锁挡着。所以从监控上看，CPU 一直很闲——这也正是"加机器没用"最反直觉的地方。</p>
+
+    <h2>二、十二个串行点</h2>
+
+    <p>从边缘到存储，逐段数下来，必须串行的位置有十二处：</p>
+
+    <table>
+      <thead>
+        <tr><th>#</th><th>位置</th><th>串的是什么</th><th>为什么不能并行</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td><strong>边缘采集</strong></td><td>单线程逐设备轮询</td><td>一个网关管一个场站的百来台设备，轮询是阻塞 IO</td></tr>
+        <tr><td>2</td><td><strong>边缘补发</strong></td><td>按设备序号有序先进先出</td><td>乱序会让下游的批量聚合一错到底</td></tr>
+        <tr><td>3</td><td><strong>MQTT broker</strong></td><td>每个订阅者的投递队列</td><td>单订阅者内保序；慢消费者会被保护机制直接掐断</td></tr>
+        <tr><td>4</td><td><strong>接入前置</strong></td><td>客户端回调单线程 + 进程内去重闸</td><td>去重水位是进程内状态，不能随便拆</td></tr>
+        <tr><td>5</td><td><strong>消息层</strong></td><td>分区内严格有序</td><td>同一个键必然同分区，这是协议保证也是业务依赖</td></tr>
+        <tr><td>6</td><td><strong>历史写入</strong></td><td>每实例恒定<strong>一条</strong>写线程</td><td>一批数据的构造与提交是有序的，多线程拿不到并行</td></tr>
+        <tr><td>7</td><td><strong>时序库会话</strong></td><td>单个会话一把锁</td><td>写会把读饿死，只能靠会话池绕开</td></tr>
+        <tr><td>8</td><td><strong>告警判定</strong></td><td>单线程流水线</td><td>逐点判定 + 每点一次状态查询，都在消费线程上</td></tr>
+        <tr><td>9</td><td><strong>告警业务</strong></td><td>单线程 + 每事件一事务</td><td>一次缓存往返 + 数次数据库往返，都是固定成本</td></tr>
+        <tr><td>10</td><td><strong>指标派生</strong></td><td>内存内时间窗聚合</td><td>窗口是一个整体，切开了就不是同一个窗口</td></tr>
+        <tr><td>11</td><td><strong>推送投递</strong></td><td>每渠道池内串行发送</td><td>第三方网关调用是阻塞的</td></tr>
+        <tr><td>12</td><td><strong>时间边界</strong></td><td>跨分区的批会被拆开写</td><td>一批数据跨了时间分区，就得拆成多次</td></tr>
+      </tbody>
+    </table>
+
+    <p>这十二处里，<strong>只有第 10 条（时间窗）是数学上不可并行的</strong>，其余十一条都是工程选择的结果。这个区分很重要：数学约束只能改算法，工程约束可以改设计。</p>
+
+    <h2>三、压力谱：七处各自在数不同的东西</h2>
+
+    <p>光有串行点还不够，还得知道每一处到底要扛多少。而这里有一个坑：<strong>每一处的压力单位都不一样</strong>。</p>
+
+    <table>
+      <thead>
+        <tr><th>位置</th><th>要扛多少（怎么推出来的）</th><th>瓶颈</th><th>为什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>边缘采集</strong></td>
+          <td>一场站 100–200 台 × 每台约 140 点 ÷ 采集周期<br>≈ <strong>1.4–2.8 万点/s</strong></td>
+          <td>单线程轮询</td>
+          <td>阻塞 IO + 串行 poll，<strong>加核无效</strong>；实测拐点在 2000–2500 台设备</td>
+        </tr>
+        <tr>
+          <td><strong>MQTT broker</strong></td>
+          <td>入站 1.2 万条/s × 扇出到 N 个订阅者；<br><strong>连接数 1.2 万</strong></td>
+          <td><strong>连接内存</strong>（约 16KB/连接）</td>
+          <td>吞吐不是问题（实测下界 40 万条/s），真正的上限是内存；超阈值它<strong>不降速、直接掐断</strong></td>
+        </tr>
+        <tr>
+          <td><strong>接入前置</strong></td>
+          <td>1.2 万设备 ÷ 周期<br>≈ <strong>1.2 万条/s</strong></td>
+          <td>客户端回调单线程</td>
+          <td>库的回调是单线程的；实测只吃 1.7 核，给 4 核不变快</td>
+        </tr>
+        <tr>
+          <td><strong>消息层</strong></td>
+          <td>1.2 万条/s × 每批约 10KB<br>≈ <strong>127 MB/s</strong></td>
+          <td>落盘带宽 + 分区数</td>
+          <td>顺序写盘 + 多副本复制；单 broker 卡在约 200MB/s</td>
+        </tr>
+        <tr>
+          <td><strong>历史写入</strong></td>
+          <td>170 万点 × 1Hz<br>≈ <strong>1.7M 点/s</strong></td>
+          <td>每实例<strong>一条</strong>写线程</td>
+          <td>批构造占该线程 86.7% 单核；多线程买不到并行，只能加实例</td>
+        </tr>
+        <tr>
+          <td><strong>实时快照</strong></td>
+          <td>1.2 万<strong>批</strong>/s（整批写）<br>≈ 1.2 万次命令/s</td>
+          <td><strong>内存</strong>（约 0.7MB/设备）</td>
+          <td>它是存储不是缓存，写失败要重投，所以不能异步攒</td>
+        </tr>
+        <tr>
+          <td><strong>告警判定</strong></td>
+          <td>170 万<strong>点</strong>/s（逐点，不吃批）</td>
+          <td>逐点状态查询<br>≈ <strong>5.5–6 万/s</strong></td>
+          <td>每点一次同步往返；这就是上一篇说的"瓶颈不在规则"</td>
+        </tr>
+        <tr>
+          <td><strong>告警业务</strong></td>
+          <td>事件/s = 点数 × 越限率；每事件 1 次缓存 + <strong>约 5 次库往返</strong></td>
+          <td>数据库往返</td>
+          <td>单实例约 2000 事件/s；<strong>加核买不到</strong>，因为成本是往返次数</td>
+        </tr>
+        <tr>
+          <td><strong>时序库</strong></td>
+          <td>1.7M 点/s；<strong>元数据 3.1KB/序列 × 170 万序列 ≈ 5.3GB</strong></td>
+          <td><strong>不在"点/s"这条轴上</strong></td>
+          <td>每序列固定内存开销，且不参与写入限流</td>
+        </tr>
+        <tr>
+          <td><strong>推送投递</strong></td>
+          <td>事件数 × 接收人数 × 渠道数</td>
+          <td>第三方网关配额</td>
+          <td>外部系统是硬约束（有的渠道硬限到 20 条/分钟）</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>这张表最该记住的不是某一行的数字，而是<strong>它列出了七种不同的"每秒"</strong>：点/s、条/s、字节/s、事件/s、序列数、连接数、条/分钟。</p>
+
+    <blockquote>
+      容量估算最常见的错误，不是算错乘法，而是<b>用错了单位</b>——<br>
+      拿点/s 去算分区数、拿条/s 去估存储、拿 CPU 使用率去判断该不该扩容。
+    </blockquote>
+
+    <p>第 1 篇里那个 142 倍的换算系数，就是这套单位体系的入口。而这篇想补的是它的另一端：<strong>有些瓶颈根本不在"每秒多少"这条轴上</strong>。时序库那条元数据墙是按<strong>序列数</strong>算的，你把每秒点数据高十倍也没用；MQTT 那条墙是按<strong>连接数 × 每连接内存</strong>算的，吞吐再富余也扛不住连接涨。</p>
+
+    <h2>四、并行的三种手段</h2>
+
+    <p>既然有串行点，就得有对应的破法。整条链上只用三种，而且每种都精确对应一类串行原因：</p>
+
+    <table>
+      <thead>
+        <tr><th>手段</th><th>破的是哪类串行</th><th>在这条链上的样子</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>切分</strong>（按设备分区）</td>
+          <td>「不能并行是因为要保序」</td>
+          <td>用设备做键：设备内有序、设备间并行。这一下同时解决了保序与并行</td>
+        </tr>
+        <tr>
+          <td><strong>摊薄</strong>（批量）</td>
+          <td>「不能并行是因为单次成本太高」</td>
+          <td>一批 140 点只算一条消息；命令率跟报文率走而不是点率</td>
+        </tr>
+        <tr>
+          <td><strong>解耦</strong>（异步 / 独立消费组）</td>
+          <td>「不能并行是因为上下游绑在一起」</td>
+          <td>一份数据多路消费，一路慢不拖累其他；写盘与读互不阻塞</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>三种手段里，<strong>切分是最有价值的</strong>，因为它一箭双雕：分区键既是"谁必须有序"的声明，也是"谁可以并行"的单位。这也是前面几篇反复回到"分区键选设备"的原因——它同时决定了顺序、并行度和状态能不能本地化。</p>
+
+    <p>但它也是唯一一个<strong>不可逆</strong>的选择：分区数只能增不能减，改键会把已有的顺序全部打乱。所以这条链上最该慎重的技术决定，不是选哪个中间件，而是<strong>用哪个维度切</strong>。</p>
+
+    <h2>五、加机器到底有没有用</h2>
+
+    <p>有了上面的铺垫，逐层回答"加机器管不管用"就变成查表了：</p>
+
+    <table>
+      <thead>
+        <tr><th>层</th><th>有效的手段</th><th>无效的手段</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>边缘</strong></td><td>加实例（等于加场站）</td><td>加核</td></tr>
+        <tr><td><strong>接入前置</strong></td><td>加副本 + 共享订阅 + 按设备粘住</td><td>加核（回调单线程）</td></tr>
+        <tr><td><strong>MQTT broker</strong></td><td>加节点摊连接内存</td><td>加核（瓶颈是内存不是算力）</td></tr>
+        <tr><td><strong>消息层</strong></td><td>加 broker、加分区（一次性）</td><td>加消费者超过分区数</td></tr>
+        <tr><td><strong>历史写入</strong></td><td><strong>只能加实例</strong></td><td>加核、调并发</td></tr>
+        <tr><td><strong>实时快照</strong></td><td>加实例、加每实例内存</td><td>加消费线程（超过某个值就空转）</td></tr>
+        <tr><td><strong>告警判定</strong></td><td><strong>先调并发</strong>（实测 3.6 倍），再谈加实例</td><td>盲目加实例（上限是分区数）</td></tr>
+        <tr><td><strong>告警业务</strong></td><td>调并发</td><td>加实例（只为高可用，不为容量）</td></tr>
+        <tr><td><strong>推送</strong></td><td>调渠道速率</td><td><strong>加实例完全无效</strong></td></tr>
+        <tr><td><strong>时序库</strong></td><td>加节点（写入近似线性）</td><td>加节点救不了元数据墙</td></tr>
+      </tbody>
+    </table>
+
+    <p>把这些结论收成一条铁律：</p>
+
+    <blockquote>
+      容量 = 实例数 × 每实例并发 × 每并发吞吐，<b>且这个乘积受分区数封顶</b>。
+    </blockquote>
+
+    <figure>
+      <svg viewBox="0 0 820 220" role="img" aria-label="加实例的吞吐曲线在封顶处变平">
+        <defs>
+          <marker id="a16" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <line x1="60" y1="180" x2="780" y2="180" stroke="#c9cfd8"/>
+        <line x1="60" y1="180" x2="60" y2="30" stroke="#c9cfd8"/>
+        <text x="780" y="202" text-anchor="end" font-size="12" fill="#8c8c8c">实例数 / 分区数 →</text>
+        <text x="46" y="36" text-anchor="end" font-size="12" fill="#8c8c8c">吞吐 ↑</text>
+
+        <path d="M60,180 L300,80" stroke="#3f9a63" stroke-width="2.5"/>
+        <path d="M300,80 L780,62" stroke="#b06a6a" stroke-width="2.5" stroke-dasharray="6 4"/>
+
+        <line x1="300" y1="80" x2="300" y2="180" stroke="#c9cfd8" stroke-dasharray="3 3"/>
+        <text x="300" y="198" text-anchor="middle" font-size="11" fill="#8c8c8c">封顶点</text>
+
+        <text x="150" y="118" font-size="12" fill="#3f9a63">线性区：加实例有效</text>
+        <text x="470" y="46" font-size="12" fill="#b06a6a">封顶后：加实例只是让每台更闲</text>
+
+        <text x="60" y="24" font-size="11" fill="#8c8c8c">封顶可能来自：分区数、单实例串行段、下游单点、外部配额</text>
+      </svg>
+      <figcaption>加实例的收益不是一条直线——它在某个与"并发单元数量"相关的地方折平</figcaption>
+    </figure>
+
+    <p>由此还有一条很实用的部署纪律：<strong>不要用 CPU 使用率做自动扩缩容</strong>。因为串行点不烧 CPU——我们实测过，设备数压到 4000 时整机只用 3.4/16 核，链路已经崩了。按 CPU 扩容会在最该扩的时候一动不动。</p>
+
+    <p>更该看的指标是<strong>积压（lag）</strong>：它直接反映"消费跟不上"。而 lag 涨的原因可能是消费慢、可能是下游慢、也可能是分区数不够——这就要看下一节。</p>
+
+    <h2>六、背压：过载是四种悬崖，不是平滑变慢</h2>
+
+    <p>大多数系统在过载时会"变慢"。这条链不是——它有四种不同的悬崖，而且各自的表现完全不同：</p>
+
+    <table>
+      <thead>
+        <tr><th>位置</th><th>过载时发生什么</th><th>危害程度</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>MQTT broker</strong></td>
+          <td>慢订阅者被<strong>直接掐断</strong>，会话连同队列一起销毁</td>
+          <td>🔴 缺席期间全丢，且客户端不知道</td>
+        </tr>
+        <tr>
+          <td><strong>历史写入</strong></td>
+          <td>有界缓冲满了<strong>丢最旧</strong>，且不向上游传背压</td>
+          <td>🔴 静默丢数据</td>
+        </tr>
+        <tr>
+          <td><strong>实时快照</strong></td>
+          <td>不丢，只是<strong>延迟暴涨</strong>（位移不提交，消息重投）</td>
+          <td>🟡 可恢复</td>
+        </tr>
+        <tr>
+          <td><strong>边缘采集</strong></td>
+          <td>采集周期被<strong>静默拉长</strong></td>
+          <td>🔴 等价于偷偷降采样，零告警</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>四种里只有一种是"良性"的。另外三种的共同点是：<strong>它们都不报错</strong>。</p>
+
+    <p>这也解释了为什么整条链上<strong>只有消息层能"攒"</strong>：它是唯一一个能把积压持久化下来、等高峰过去再消化的地方。其余各层的缓冲都是有界的，满了就必须做选择——丢最旧、掐断、还是拉长周期。</p>
+
+    <p>所以背压设计的真正问题不是"怎么不丢"，而是：<strong>过载时你要哪一种坏法，以及怎么让它可见。</strong></p>
+
+    <h2>七、过载是怎么传导的</h2>
+
+    <p>背压的四种悬崖不是孤立发生的。它们会沿着链路往上游传导，而每一段传导都会**丢掉一部分信息**——最后你能看到的，往往只是最末端的一个异常。</p>
+
+    <p>一个典型的连锁反应长这样：</p>
+
+    <ol>
+      <li><strong>时序库写慢了</strong>（磁盘、元数据、或者单纯是写入串行段打满）；</li>
+      <li>历史消费开始积压，它的有界缓冲逐渐填满；</li>
+      <li>缓冲满了，策略是<strong>丢最旧</strong>——于是数据开始静默丢失；</li>
+      <li>而它**不向上游传背压**，所以消息层看到的是"消费正常"（位移在推进，只是推进的是丢完之后的位置）；</li>
+      <li>上游继续按原速发，直到有人一周后对账，才发现某段时间的数据少了一块。</li>
+    </ol>
+
+    <p>这条链上有三处这样的传导，每一处都是"越往上游越不知道"：</p>
+
+    <table>
+      <thead>
+        <tr><th>起点</th><th>传导后变成</th><th>最终看到的现象</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>时序库写慢</td>
+          <td>历史缓冲满 → 丢最旧</td>
+          <td>对账时发现数据缺口</td>
+        </tr>
+        <tr>
+          <td>订阅者处理慢</td>
+          <td>broker 邮箱积压 → 掐断连接</td>
+          <td>吞吐"假封顶"，重连计数暴涨</td>
+        </tr>
+        <tr>
+          <td>采集循环变慢</td>
+          <td>周期被拉长</td>
+          <td>曲线变稀，但没有任何错误</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>所以设计背压时，除了"选哪种坏法"，还要多做一件事：<strong>让每一段的丢弃/掐断都留下计数</strong>。因为传导链上游永远看不到下游的真实状态，唯一能穿透的就是这些计数器。</p>
+
+    <p>这也是为什么这条链上最有价值的运维指标不是 QPS，而是那几类"异常计数"：丢了最旧多少条、掐断了多少次、周期被拉长了多少。它们不反映性能，它们反映<strong>损失</strong>。</p>
+
+    <h2>八、隔离：一路慢不该拖垮其他</h2>
+
+    <p>既然过载是悬崖，那么"不让悬崖扩散"就比"不让悬崖出现"更现实。这条链上的隔离手段有五种形态，本质是同一件事：</p>
+
+    <ul>
+      <li><strong>路与路</strong>：历史 / 实时 / 告警 / 派生是四个独立消费组，各自写各自的存储，一路失败只自身重试；</li>
+      <li><strong>数据与数据</strong>：补发的旧数据走独立通道，只有历史消费它——实时与告警天然看不到旧数据；</li>
+      <li><strong>渠道与渠道</strong>：推送按渠道分池，电话外呼慢不会堵住短信；</li>
+      <li><strong>实例与实例</strong>：点表缓存与业务缓存不放同一个实例，大 key 的抖动不波及限流；</li>
+      <li><strong>前后台</strong>：时序库的 compaction / TTL 默认与前台读写共享资源，必须显式限流与错峰。</li>
+    </ul>
+
+    <p>五种形态可以归纳成一句话：<strong>把"会互相拖累的东西"放到不同的失败域里</strong>。而判断有没有做到，方法很朴素——问一句"这一路挂了，还有几路在跑"。</p>
+
+    <p>隔离也有代价，而且常常被忽略：<strong>失败域越多，全链路的"局部不一致"就越多</strong>。四路独立之后，实时快照可能已经更新、历史还在追赶，同一时刻两条路给出的答案不同。这不是 bug，是隔离的必然产物——所以隔离必须和"可解释"配套：当有人问"为什么这两个页面数字不一样"，你要能指出他看的是哪一路。</p>
+
+    <p>换句话说，隔离把"一个大的正确性问题"换成了"几个小的、可观测的时序问题"。这笔交易划算，前提是你真的去观测了它们。</p>
+
+    <h2>九、遇到瓶颈，先问三个问题</h2>
+
+    <p>把前面几节收成一个可操作的流程。下次发现吞吐不够，按顺序问：</p>
+
+    <ol>
+      <li><strong>瓶颈在哪条轴上？</strong>点/s、条/s、事件/s、连接数、还是序列数？——单位搞错，后面全错。</li>
+      <li><strong>那里是不是串行的？</strong>如果是，加机器没用；要看是"必须串行"（业务语义）还是"碰巧串行"（实现选择）。</li>
+      <li><strong>扩的杠杆是什么？</strong>加实例、加分区、调并发、还是提速外部依赖？——这条链上四种答案都出现过。</li>
+    </ol>
+
+    <p>三个问题问完，通常会发现真正的答案不是"加机器"，而是某一处配置、某一个键、或者某一段批量的调整。这也解释了为什么这条链路的"高并发"读起来不像高并发——它没有惊心动魄的压测数字，只有一串"哪儿不能并行、为什么"。</p>
+
+    <h2>十、边界：什么时候不必这么讲究</h2>
+
+    <ul>
+      <li><strong>设备规模在千台以内</strong>。那时候串行点全都不是瓶颈，一个进程从采集到入库全做完也没问题。</li>
+      <li><strong>数据允许丢</strong>。可以省掉绝大部分背压设计——反正丢了也不影响业务。</li>
+      <li><strong>延迟不敏感</strong>。如果分钟级刷新就够，用定时批处理替代流式处理，整条链的复杂度会降一个量级。</li>
+      <li><strong>只有一路消费</strong>。隔离的价值要在"多路"时才体现，单路时那些独立消费组只是多余的部署单元。</li>
+    </ul>
+
+    <h2>下一篇</h2>
+
+    <p>这一篇讲的是"哪里快、哪里慢"。下一篇换个维度问一个更根本的问题：<strong>这条链上没有事务，那么多处写入靠什么收敛？</strong>——不是复述前面各篇的机制，而是把它们归纳成一张总表、几个可复用的模式，以及一份诚实的"哪里明确放弃了强一致"。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
