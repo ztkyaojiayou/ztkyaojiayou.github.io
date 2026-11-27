@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DP 四路消费：为什么一份数据要读四遍 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="历史、实时、告警、派生四条消费链路的节奏完全不同，更关键的是：它们的幂等语义必须不一样。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>DP 四路消费——为什么一份数据要读四遍</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 8 篇</div>
+
+    <div class="takeaway">
+      <p>同一份报文，被四个消费者各读一遍。看起来是重复劳动，实际上是<strong>把四种节奏拆开</strong>——如果合并成一路，最慢的那件事会绑住所有人。</p>
+      <p>更关键的是另一件事：这四路的<strong>幂等语义必须不一样</strong>。原始点可以重复，派生指标不能，通知更不能。<strong>幂等语义跟着「重复的代价」走，不跟代码风格走。</strong></p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
+
+    <h2>一、同一份数据，四个去处</h2>
+
+    <p>消息层里躺着的每一条报文，会被四组消费者分别读走。它们在代码里都以 <code>dp-</code> 开头，我按用途把它们叫历史、实时、告警、派生：</p>
+
+    <figure>
+      <svg viewBox="0 0 900 300" role="img" aria-label="一份数据分给四路消费者">
+        <defs>
+          <marker id="a8" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <rect x="16" y="122" width="130" height="56" rx="8" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="81" y="148" text-anchor="middle" font-size="14" fill="#2c3e50">消息队列</text>
+        <text x="81" y="167" text-anchor="middle" font-size="11" fill="#7f8c8d">按设备分区</text>
+
+        <path d="M146,150 L196,150" stroke="#9aa4b2" stroke-width="1.5"/>
+        <path d="M196,150 L196,54" stroke="#9aa4b2" stroke-width="1.5"/>
+        <path d="M196,150 L196,246" stroke="#9aa4b2" stroke-width="1.5"/>
+        <path d="M196,54 L206,54" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a8)"/>
+        <path d="M196,118 L206,118" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a8)"/>
+        <path d="M196,182 L206,182" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a8)"/>
+        <path d="M196,246 L206,246" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a8)"/>
+
+        <rect x="212" y="28" width="180" height="52" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="302" y="50" text-anchor="middle" font-size="14" fill="#2c3e50">历史消费</text>
+        <text x="302" y="69" text-anchor="middle" font-size="11" fill="#7f8c8d">批量写时序库</text>
+
+        <rect x="212" y="92" width="180" height="52" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="302" y="114" text-anchor="middle" font-size="14" fill="#2c3e50">实时消费</text>
+        <text x="302" y="133" text-anchor="middle" font-size="11" fill="#7f8c8d">当前值快照</text>
+
+        <rect x="212" y="156" width="180" height="52" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="302" y="178" text-anchor="middle" font-size="14" fill="#2c3e50">告警判定</text>
+        <text x="302" y="197" text-anchor="middle" font-size="11" fill="#7f8c8d">逐点状态计算</text>
+
+        <rect x="212" y="220" width="180" height="52" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="302" y="242" text-anchor="middle" font-size="14" fill="#2c3e50">指标派生</text>
+        <text x="302" y="261" text-anchor="middle" font-size="11" fill="#7f8c8d">窗口降采样</text>
+
+        <path d="M392,54 L440,54" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a8)"/>
+        <path d="M392,118 L440,118" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a8)"/>
+        <path d="M392,182 L440,182" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a8)"/>
+        <path d="M392,246 L440,246" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a8)"/>
+
+        <rect x="446" y="28" width="200" height="52" rx="8" fill="#f4f8f5" stroke="#c9e0d2"/>
+        <text x="546" y="50" text-anchor="middle" font-size="13" fill="#2c3e50">时序库 · 原始点</text>
+        <text x="546" y="69" text-anchor="middle" font-size="11" fill="#3f9a63">at-least-once · 可回补</text>
+
+        <rect x="446" y="92" width="200" height="52" rx="8" fill="#f4f8f5" stroke="#c9e0d2"/>
+        <text x="546" y="114" text-anchor="middle" font-size="13" fill="#2c3e50">缓存 · 最新值</text>
+        <text x="546" y="133" text-anchor="middle" font-size="11" fill="#3f9a63">写失败必须重投</text>
+
+        <rect x="446" y="156" width="200" height="52" rx="8" fill="#f4f8f5" stroke="#c9e0d2"/>
+        <text x="546" y="178" text-anchor="middle" font-size="13" fill="#2c3e50">告警事件</text>
+        <text x="546" y="197" text-anchor="middle" font-size="11" fill="#3f9a63">唯一键 · 状态在规则内</text>
+
+        <rect x="446" y="220" width="200" height="52" rx="8" fill="#fdf6f6" stroke="#e7c6c6"/>
+        <text x="546" y="242" text-anchor="middle" font-size="13" fill="#2c3e50">温层 · 聚合值</text>
+        <text x="546" y="261" text-anchor="middle" font-size="11" fill="#b06a6a">at-most-once · 不可回补</text>
+
+        <rect x="666" y="28" width="220" height="244" rx="8" fill="#fafbfc" stroke="#d6dae3" stroke-dasharray="4 3"/>
+        <text x="776" y="96" text-anchor="middle" font-size="13" fill="#2c3e50">四路各自独立</text>
+        <text x="776" y="120" text-anchor="middle" font-size="12" fill="#7f8c8d">独立消费组</text>
+        <text x="776" y="142" text-anchor="middle" font-size="12" fill="#7f8c8d">独立位点</text>
+        <text x="776" y="164" text-anchor="middle" font-size="12" fill="#7f8c8d">独立扩容</text>
+        <text x="776" y="186" text-anchor="middle" font-size="12" fill="#7f8c8d">独立降级</text>
+        <text x="776" y="216" text-anchor="middle" font-size="11" fill="#b06a6a">一路慢，不拖累其它三路</text>
+      </svg>
+      <figcaption>同一份报文，四条独立的消费链路，四种不同的写入语义</figcaption>
+    </figure>
+
+    <p>四路做的事情差异很大：历史路要完整留痕、实时路只要最新值、告警路只关心状态变化、派生路把高频点压成低频聚合。但真正决定它们必须分开的，不是"要做四件事"，而是<strong>"这四件事的节奏根本不一样"</strong>。</p>
+
+    <h2>二、为什么不合并成一路</h2>
+
+    <p>最自然的想法是：一个消费者，读完一条消息，依次做四件事，然后提交位点。代码只有一份，日志也只有一份。这个方案在演示环境里完美运行，在生产上会以三种方式坏掉。</p>
+
+    <h3>坏法一：最慢的那件事绑住所有人</h3>
+
+    <p>写时序库是批量写，为了摊薄开销，它要攒一批再提交；而实时快照要求低延迟——页面上的值最好是"刚刚的"。这两件事的最优批大小差一个数量级。</p>
+
+    <p>合并之后只有两种结局：要么按实时路的节奏走，历史路被迫小批写，写入吞吐掉下去；要么按历史路的节奏走，实时值延迟到秒级以上。<strong>没有折中，因为批大小是一个数，而两者的需求不可能同时满足。</strong></p>
+
+    <h3>坏法二：失败处理互相污染</h3>
+
+    <p>四路的写入目标不一样，失败方式也不一样：时序库可能因为磁盘满而拒绝写入；缓存可能瞬断；告警的状态计算可能因为某条规则异常而抛错。</p>
+
+    <p>合并之后，任何一处失败都意味着<strong>整条消息处理失败</strong>——于是位点不前进，四路一起重来。缓存抖一下，历史数据也跟着不写了。这显然不合理，但合并方案没有别的选择：一条消息要么整体成功，要么整体失败。</p>
+
+    <h3>坏法三：幂等语义没法统一</h3>
+
+    <p>这是最根本的一条，也是下一篇小节的伏笔：四路对"重复"的容忍度完全不同。合并成一路，就只能选一种幂等策略——而那必然对某些路是错的。</p>
+
+    <p>所以四路分开不是为了"看起来解耦"，而是因为<strong>它们对同一件事（重复投递）有互相冲突的要求</strong>。</p>
+
+    <h2>三、四路各自在做什么</h2>
+
+    <table>
+      <thead>
+        <tr><th>消费路</th><th>目标</th><th>写到哪</th><th>失败怎么办</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>历史</strong></td>
+          <td>完整留痕，支持回放补数</td>
+          <td>时序库（按「测点 + 时间」覆盖写）</td>
+          <td>重试；关键是<strong>只有它能靠加实例扩吞吐</strong></td>
+        </tr>
+        <tr>
+          <td><strong>实时</strong></td>
+          <td>当前值，供页面与接口读</td>
+          <td>缓存（整批写入）</td>
+          <td>写失败必须重投——它不是缓存，是<strong>存储</strong></td>
+        </tr>
+        <tr>
+          <td><strong>告警</strong></td>
+          <td>逐点状态计算，产生告警事件</td>
+          <td>告警事件 + 规则状态</td>
+          <td>重试；状态归每条规则自己管</td>
+        </tr>
+        <tr>
+          <td><strong>派生</strong></td>
+          <td>把高频点压成分钟级聚合</td>
+          <td>温层（独立的序列空间）</td>
+          <td><strong>从不重试</strong>——见下一节</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>最后一列「失败怎么办」看起来只是个技术细节，实际上是这四路设计里最见功力的地方。特别是最后一行：为什么一条消费链路会<strong>故意选择不重试</strong>？</p>
+
+    <p>四路的性能性格也完全不同，这一点直接影响容量规划：</p>
+
+    <ul>
+      <li><strong>告警路</strong>是单线程流水线，单实例大致在每秒两三千条报文量级——要提吞吐只能加实例，不能靠调并发。</li>
+      <li><strong>历史路</strong>受写入串行度限制：一批数据必须有序构造、有序提交，多线程拿不到并行收益。</li>
+      <li><strong>实时路</strong>是内存写，单条成本最低，但它受限于整批写入的规模，不是 CPU。</li>
+      <li><strong>派生路</strong>吃的是窗口计算，成本跟窗口内点数成正比，跟报文条数关系不大。</li>
+    </ul>
+
+    <p>换句话说，<strong>「加机器能不能扩」这件事，四路的答案是不一样的</strong>——这正是第六节要展开的容量差异。</p>
+
+    <h2>四、幂等语义必须不一样</h2>
+
+    <p>先明确两个词：</p>
+
+    <ul>
+      <li><strong>at-least-once</strong>：保证至少处理一次，可能重复。前提是<strong>重复处理是无害的</strong>。</li>
+      <li><strong>at-most-once</strong>：保证最多处理一次，可能漏。前提是<strong>重复处理是有害的</strong>。</li>
+    </ul>
+
+    <p>大多数系统会默认选前者，因为"丢数据"听起来比"重复数据"严重。但在这条链路上，四路的选择完全不同：</p>
+
+    <table>
+      <thead>
+        <tr><th>消费路</th><th>语义</th><th>为什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>历史</td><td>at-least-once</td>
+          <td>按「测点 + 时间」覆盖写，重复写同一条数据结果不变；漏了才是真丢</td>
+        </tr>
+        <tr>
+          <td>实时</td><td>at-least-once</td>
+          <td>快照被覆盖多次结果一样；反而漏更新会让页面停在旧值</td>
+        </tr>
+        <tr>
+          <td>告警</td><td>at-least-once</td>
+          <td>事件有唯一键，重复的产生会被去重挡住</td>
+        </tr>
+        <tr>
+          <td>派生</td><td><strong>at-most-once</strong></td>
+          <td>重投会把同一个时间窗算两遍，<strong>结果直接错</strong>，而且不会报错</td>
+        </tr>
+        <tr>
+          <td>通知（下一段链路）</td><td><strong>at-most-once</strong></td>
+          <td>下游第三方网关大多没有幂等键，重复一条短信就是真金白银加一次投诉</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>把所有路统一成 at-least-once 会怎样？派生指标会在每次重投时把窗口算两遍——分钟均值被拉偏，而系统里没有任何指标会因此变红。<strong>这类错误的可怕之处在于它长得像正常波动。</strong></p>
+
+    <p>把所有路统一成 at-most-once 会怎样？历史路会在任何一次瞬时故障时静默丢点，而这些点永远不会被补回来。</p>
+
+    <p>所以正确的说法不是"选一种幂等策略"，而是：<strong>每一路按「重复的代价」单独定语义</strong>。重复写一个点，代价是零；重复算一个窗口，代价是数据错；重复发一条通知，代价是钱和信任。代价不同，策略就不能相同。</p>
+
+    <h2>五、派生路为什么"不重试"反而更安全</h2>
+
+    <p>派生路的做法值得单独说，因为它是四路里唯一一条<strong>主动放弃重试</strong>的链路，而直觉上这像是在牺牲可靠性。</p>
+
+    <p>它算的是分钟级降采样：把一分钟内某个测点的所有原始点聚合（均值、极值、累计）成一个或几个值。这里的关键是——<strong>聚合是有状态的，而且状态是"这一分钟已经算过什么"</strong>。</p>
+
+    <p>如果一条消息处理失败后重投，会发生什么？窗口里那个原始点被累加了两遍。均值的分母多了、累计量多了、极值可能看不出变化——<strong>错误被平均掩盖了</strong>。而且它不会触发任何告警，只会在几天后有人拿着报表问「这个数怎么对不上」。</p>
+
+    <p>相比之下，漏掉一个是更好的结果：少一个点，曲线凹一小块，肉眼能看出来，也能定位；而算重的点会把整段数据的统计口径永久污染。</p>
+
+    <blockquote>
+      在"可能错"和"可能漏"之间，数据链路要选的是<b>错得可见</b>。
+    </blockquote>
+
+    <p>由此还派生出一条纪律：<strong>降采样绝不回读时序库</strong>。回读看起来更"准"（数据都在库里），但时序库的强项是按时间范围扫，弱项是按设备整条读，后者的吞吐低一个量级。所以派生数据从消息流旁路实时算，不回头读库。</p>
+
+    <h2>六、几个具体的坑</h2>
+
+    <h3>实时路的「防回跳」</h3>
+
+    <p>第 4 篇讲过补发数据会走独立的重放通道。但如果某天有一条旧数据从实时路进来了（配置错误、重放没隔离干净），快照就会被拉回几小时前的值——页面上那个设备的温度忽然跳变，然后跳回来。</p>
+
+    <p>所以实时路在批量写入前要做一个判断：<strong>这一批的时间戳，是否比当前的快照更新</strong>。不是就不写。这个守卫很便宜，但它挡住了最容易被用户看见的一类错误。</p>
+
+    <h3>派生路的「静默缺口」</h3>
+
+    <p>派生是按窗口算的。如果一台设备在这段时间里因为断网没上报，窗口里的样本数就会偏少——聚合值会偏小，而系统完全不知道这是因为"设备没数据"还是"数据本来就小"。</p>
+
+    <p>所以聚合时必须同时记样本数，让下游能判断这个点是否可信。<strong>没有样本数的聚合值，是一个只能看不能用的数。</strong></p>
+
+    <h3>告警路的「状态归属」</h3>
+
+    <p>告警判定是有状态的：这条规则对这个点是否已经处于告警态、抑制窗口到没到、升级到第几级。这些状态<strong>必须归每条规则自己管</strong>，不能让框架统一持有。</p>
+
+    <p>原因很实际：不同规则的状态机不一样，是谁的状态谁最清楚。框架如果硬要统一管理，要么抽象出一个大而全的状态对象，要么让每条规则反向注册回调——两种都比"各管各的"复杂。</p>
+
+    <h2>七、四路各自扩容、各自降级</h2>
+
+    <p>四路是独立的消费组，因此它们天然具备三件事：</p>
+
+    <ul>
+      <li><strong>独立扩容</strong>：某一路跟不上，就给它加实例；位点那边会自动做分区再平衡。</li>
+      <li><strong>独立降级</strong>：某一路出问题，可以先停掉它，其它三路照常跑，位点各自保留。</li>
+      <li><strong>互不拖累</strong>：这就是第二节说的三个坏法的反面。</li>
+    </ul>
+
+    <p>但有一路是例外：<strong>历史路不能靠"加并发"扩吞吐</strong>。它的瓶颈在单实例的写入串行度上——同一批数据必须被有序地构造和提交，多线程买不到并行。所以它扩容的方式只有一种：加实例、让分区重新分配。</p>
+
+    <p>这个差异值得写进容量规划：<strong>说「这一路能水平扩展」之前，先确认瓶颈在分区分配上，还是在单实例的串行段上</strong>。前者加机器有用，后者加机器只是让每台更闲。</p>
+
+    <h2>八、边界：什么时候可以合并</h2>
+
+    <ul>
+      <li><strong>只有一种消费需求</strong>。如果系统只需要"把数据存下来"，那就只有历史路，四路消费这件事不存在。</li>
+      <li><strong>数据量很小</strong>。每秒几百条的时候，一个消费者做完四件事完全够用，拆开只增加运维成本。</li>
+      <li><strong>能接受统一语义的代价</strong>。如果你的场景里"重复"对每一种下游都无害，那么统一成 at-least-once 是简化，而不是妥协。</li>
+    </ul>
+
+    <h2>下一篇</h2>
+
+    <p>数据被四路消费完，各自的落点是四类完全不同的存储：时序库、缓存、对象存储、关系库。它们各自的"墙"完全不同——下一篇先讲历史存储：为什么先算容量账再谈分层，以及那个看起来像"写慢了"、实际是"一个字节都没进去"的元数据瓶颈。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
