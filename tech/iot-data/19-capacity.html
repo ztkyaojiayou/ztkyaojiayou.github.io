@@ -137,40 +137,23 @@
       <li><strong>判据是"运行期间 lag 是否上涨"，不是"停压后能否排空"</strong>。后者太宽：我们有一档结束时已经积压了 <strong>10 万多条</strong>，但因为停压后最终排空了，被判成"通过"。排队能排空只说明它还没死，不说明它跟得上。</li>
     </ul>
 
-    <p>按这四条跑出来的阶梯，读数才有意义。下面是三条真实的阶梯：</p>
+    <p>按这四条跑出来的阶梯，读数才有意义。下面是一条真实的阶梯（历史写入这一路），它最干净、也最能说明问题：</p>
 
     <table>
       <thead>
-        <tr><th>层</th><th>逐档输入</th><th>稳定吞吐</th><th>lag 表现</th><th>端到端 p50</th></tr>
+        <tr><th>逐档输入</th><th>稳定吞吐</th><th>lag 表现</th><th>端到端 p50</th></tr>
       </thead>
       <tbody>
-        <tr>
-          <td rowspan="4"><strong>历史写入</strong></td>
-          <td>2,000 设备</td><td>284k–292k 点/s</td><td>0</td><td>84 ms</td>
-        </tr>
+        <tr><td>2,000 设备</td><td>284k–292k 点/s</td><td>0</td><td>84 ms</td></tr>
         <tr><td>4,000 设备</td><td>555k–606k</td><td><strong>0，两档复现</strong></td><td>168 ms</td></tr>
         <tr><td>6,000 设备</td><td>766k–815k</td><td>0，但待处理量缓涨 = <strong>临界</strong></td><td>285 ms</td></tr>
         <tr><td>8,000 设备</td><td>835k–969k</td><td><strong>落后约 45k 点/s</strong></td><td>10,733 ms</td></tr>
-        <tr>
-          <td rowspan="4"><strong>实时快照</strong></td>
-          <td>2,000 设备</td><td>2,000 批/s</td><td>≈0</td><td>193 ms</td>
-        </tr>
-        <tr><td>4,000 设备</td><td>3,994–3,996</td><td>0</td><td>436 ms</td></tr>
-        <tr><td>6,000 设备</td><td>4,659–5,381</td><td><strong>+290,378</strong></td><td><strong>38.1 s</strong></td></tr>
-        <tr><td>12,000 设备</td><td>2,287–4,992</td><td><strong>+1,338,814</strong></td><td><strong>116 s</strong></td></tr>
-        <tr>
-          <td rowspan="1"><strong>接入前置</strong></td>
-          <td>2k / 5k / 7k / 10k / 12k</td>
-          <td>2,000 / 4,807 / 6,144 / 6,856 / 7,827</td>
-          <td><strong>峰值 8,061 后回落</strong></td>
-          <td>—</td>
-        </tr>
       </tbody>
     </table>
 
-    <p>三张表放在一起看，能得到一个比任何单点数字都重要的结论：<strong>拐点处的延迟是跳变的，不是渐变的。</strong></p>
+    <p>这张表里最该看的是两列：<strong>lag 从零到缓涨、从缓涨到落后</strong>，而<strong>延迟从 285 毫秒直接跳到 10,733 毫秒</strong>——涨了将近 40 倍。这不是"慢了一点"，这是换了一个数量级。</p>
 
-    <p>历史在 4,000 设备档延迟 168ms、6,000 档 285ms，看着还算线性；到 8,000 档直接 <strong>10,733ms</strong>——涨了将近 40 倍。实时更夸张：4,000 档 436ms，6,000 档 <strong>38.1 秒</strong>。这不是"慢了一点"，这是<strong>换了一个数量级</strong>。</p>
+    <p>同样形态的阶梯，另外两层也跑过（实时快照从 436 毫秒直接跳到 38 秒，接入前置在 8,000 条/秒之后吞吐反而回落）。它们的完整读数写在各自那一篇里，这里不重复——<strong>方法是一样的，结论也是同一个</strong>。</p>
 
     <figure>
       <svg viewBox="0 0 880 290" role="img" aria-label="负载与吞吐的关系：过拐点后回落">
