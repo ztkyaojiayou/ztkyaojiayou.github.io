@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>推送投递：地址、渠道与不重复 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="投递是不可撤销的动作。第三方网关没有幂等键，所以这里选 at-most-once；而它的可靠性不靠重试，靠 outbox 与台账。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>推送投递——地址、渠道与不重复</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 14 篇</div>
+
+    <div class="takeaway">
+      <p>投递是整个链路里<strong>唯一不可撤销</strong>的动作：消息到了人手机上，你没法把它收回来。而第三方网关大多没有幂等键。</p>
+      <p>所以这里选 at-most-once。它的可靠性不来自重试，而来自 <strong>outbox 与台账</strong>——保证「发了什么」永远可查，而不是保证「一定送到」。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
+
+    <h2>一、搬运行：从任务到「真的送出去了」</h2>
+
+    <p>上一篇的决议输出的是数据：发给谁、发什么。这一篇把它变成动作。</p>
+
+    <p>看起来只是"调个接口"，但这一层要处理五件事，每一件都独立于业务语义：</p>
+
+    <table>
+      <thead>
+        <tr><th>环节</th><th>要解决的问题</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>地址</strong></td><td>这个人的手机号/邮箱/token 是什么，从哪来，过期了怎么办</td></tr>
+        <tr><td><strong>渠道</strong></td><td>走短信还是电话还是邮件；一个渠道慢了会不会拖垮其它渠道</td></tr>
+        <tr><td><strong>限流</strong></td><td>同一个人同一渠道，一小时内最多几条</td></tr>
+        <tr><td><strong>投递</strong></td><td>调哪个网关、超时多久、失败了算成功还是失败</td></tr>
+        <tr><td><strong>回执</strong></td><td>网关说"已提交"之后，到底送达了没有</td></tr>
+      </tbody>
+    </table>
+
+    <p>这五件事都不是业务语义，所以它们被放在决议之后。这也是「决议输出纯数据、投递才碰外部世界」这个分界的价值：<strong>投递层的所有失败，都不会污染判定与决议</strong>。</p>
+
+    <h2>二、地址：绑定表与「人换号了」</h2>
+
+    <p>投递的第一个前提是知道往哪送。这件事比想象中麻烦，因为地址会变：手机号会换、公司邮箱随岗位变、App 的推送 token 在卸载重装之后就失效了。</p>
+
+    <p>这些问题有一个共同的处理原则：<strong>地址必须是一个可以失效的引用，而不是一个内嵌的字符串</strong>。也就是说，告警记录里存"发给了谁"（用户标识），而不是"发到了 138xxxx"——后者一旦号码变了，历史记录就永久错了。</p>
+
+    <p>当前有效地址从一份专门的绑定表里取，它有自己的生命周期：</p>
+
+    <table>
+      <thead>
+        <tr><th>地址类型</th><th>失效信号</th><th>处置</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>短信 / 电话</td><td>网关返回空号、停机</td><td>标记不可用并告警到人，不反复重试</td></tr>
+        <tr><td>邮件</td><td>硬退信（地址不存在）</td><td>同上；软退信（满箱）可重试</td></tr>
+        <tr><td>设备推送 token</td><td>网关明确返回 token 失效</td><td>从绑定表移除，等客户端重新注册</td></tr>
+      </tbody>
+    </table>
+
+    <p>注意表格最后一列的共性：<strong>「地址失效」不是投递失败，而是数据问题</strong>。把它当投递失败去重试，只会把网关打出一堆必然失败的请求；正确做法是反馈给绑定表，让下一次决议就知道"这个人这个渠道已经不可用了"。</p>
+
+    <h2>三、渠道分池：一个慢了不能拖住其它</h2>
+
+    <p>第二个前提是隔离。短信、邮件、电话外呼是三个完全不同的外部依赖，延迟特征差得很远——短信可能几十毫秒就返回，而电话外呼要等人接、可能几十秒。</p>
+
+    <p>如果它们共用同一个线程池，会立刻出现一个熟悉的问题：<strong>电话外呼把线程占满了，短信全堵在后面</strong>。于是"某个渠道慢"变成了"所有渠道都慢"。</p>
+
+    <p>所以投递侧按渠道分池，每个池有自己的并发上限与队列：</p>
+
+    <blockquote>
+      渠道隔离的目标不是「让每个渠道更快」，而是<b>让慢的那个只影响自己</b>。
+    </blockquote>
+
+    <p>分池之后还能做一件更细的事：<strong>按渠道单独降级</strong>。短信网关挂了，可以只停短信，邮件和电话照常——这个决定不需要动决议逻辑，只需要拨投递侧的渠道开关。这是"决议与投递分离"的第二个好处。</p>
+
+    <h2>四、限流：保护的是接收方，不只是成本</h2>
+
+    <p>第三个前提是限流，而它经常被误解为"省钱"。其实它保护的首要是<strong>接收方</strong>——一个人一小时收到五十条告警，他会关掉通知，然后彻底失联。</p>
+
+    <p>限流的维度选得很关键。我们用的是<strong>「人 × 渠道」</strong>的桶：</p>
+
+    <table>
+      <thead>
+        <tr><th>维度选法</th><th>问题</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>按告警类型限</td><td>同一个人的噪声总量仍然不受控——三种类型各发十条，他还是收到三十条</td></tr>
+        <tr><td>按全局限</td><td>会把某个人的额度消耗在别人身上，完全失去公平性</td></tr>
+        <tr><td><strong>按「人 × 渠道」</strong></td><td>✅ 直接对应"一个人被某个渠道打扰的次数"，也能按渠道单独调</td></tr>
+      </tbody>
+    </table>
+
+    <p>这里有一个很容易漏的细节：<strong>升级链上的每一步也必须计同一个桶</strong>。如果首发渠道和升级渠道各算一份配额，那一条长度为 3 的升级链就会烧掉 3 倍额度——而额度本来是保护接收方的，这一漏等于保护形同虚设。</p>
+
+    <p>还有三点值得写清楚：</p>
+
+    <ul>
+      <li><strong>计数必须在共享存储里。</strong>限流状态放进程内，多副本就等于把配额乘以副本数——和第 4 篇里 MQTT 的多副本问题是同一类错误。</li>
+      <li><strong>被限流不等于被丢弃。</strong>它应该被记成一个明确的理由码（"本小时额度已满"），而不是静默消失。否则用户投诉"没收到"时，你既证明不了发了、也证明不了没发。</li>
+      <li><strong>限流的失败方向要选。</strong>共享存储不可用时，是放行还是拒绝？放行会打爆接收方，拒绝会丢告警。我们的选择是<strong>放行 + 计数告警</strong>——因为限流是"少打扰"的优化，不该在故障时变成"漏告警"的原因。</li>
+    </ul>
+
+    <p>最后一条和上一篇的降级方向是一致的：<strong>任何保护性机制在自身故障时，都应该退回到"不保护"而不是"阻断业务"</strong>。</p>
+
+    <p>把上一篇的三种手段和这里的限流放在一起，可以看清它们各自管什么：</p>
+
+    <table>
+      <thead>
+        <tr><th>手段</th><th>减少的是</th><th>例子</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>去重</strong></td><td>同一件事的重复</td><td>同一条告警重投三次，只提醒一次</td></tr>
+        <tr><td><strong>聚合</strong></td><td>同一类事的多条</td><td>十台设备同一故障，合成一条</td></tr>
+        <tr><td><strong>限流</strong></td><td><strong>总量</strong>，不管是不是同一件事</td><td>这个人这个渠道，一小时最多 20 条</td></tr>
+      </tbody>
+    </table>
+
+    <p>三者的顺序也重要：<strong>去重和聚合在决议里做，限流在投递前做</strong>。因为前两者需要业务语义（什么算"同一件事"），而限流只需要计数——把它放进决议，会让那个纯函数开始依赖一个高频变化的计数器。</p>
+
+    <h2>五、at-most-once：为什么这里必须「宁可少发」</h2>
+
+    <p>到了这一节，是整篇最核心的取舍。</p>
+
+    <p>前面所有环节都可以 at-least-once：历史写错了可以覆盖、实时快照重投无害、告警事件有唯一键。但投递不行，原因很直接：</p>
+
+    <blockquote>
+      第三方渠道<b>没有幂等键</b>——你没法对运营商说「刚才那条别重复发」。
+    </blockquote>
+
+    <p>于是重试的代价是真实的：用户手机上真的会多一条。深夜两条重复的电话，比漏一条更能消耗人对系统的信任。</p>
+
+    <table>
+      <thead>
+        <tr><th>语义</th><th>重复的后果</th><th>遗漏的后果</th><th>适用</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>at-least-once</td><td>用户收到两条</td><td>无</td><td>历史、快照、事件</td></tr>
+        <tr><td><strong>at-most-once</strong></td><td>无</td><td>收不到，<strong>但账上有记录</strong></td><td><strong>投递</strong></td></tr>
+      </tbody>
+    </table>
+
+    <p>关键在于右边那句"账上有记录"：at-most-once 不是"放弃可靠性"，而是<strong>把可靠性从"保证送达"换成了"保证可查"</strong>。漏了能被发现、能被人工补发——这比"重复轰炸用户"好得多。</p>
+
+    <h2>六、outbox：决议与投递之间为什么要隔一张表</h2>
+
+    <p>到这里有个问题：既然决议是纯函数、投递要碰外部世界，那为什么不干脆"决议完直接调渠道"？</p>
+
+    <p>因为中间<strong>没有任何载体</strong>。决议在内存里跑完，进程一挂，这次决定就消失了——没有记录说明"这条告警本该发给谁"，也就没有任何办法补。所以两者之间必须隔一层<strong>可靠的任务表</strong>，这就是 outbox 的思想。</p>
+
+    <p>不过 outbox 有严格与宽松两种落地方式，差别很大：</p>
+
+    <table>
+      <thead>
+        <tr><th>形态</th><th>做法</th><th>保证</th><th>代价</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>严格 outbox</strong></td>
+          <td>业务状态变更与写 outbox 行放在<strong>同一个本地事务</strong>里；再由 relay 扫表发布</td>
+          <td>业务动作与消息<strong>原子</strong>：要么都成，要么都不成</td>
+          <td>要额外一套 relay；要处理"发布成功但标记失败"导致的重复发布</td>
+        </tr>
+        <tr>
+          <td><strong>台账 + 扫描</strong></td>
+          <td>任务落表，由消费方推进状态；卡住的由定时扫描捞起</td>
+          <td>任务<strong>不丢、可推进</strong></td>
+          <td>推进有延迟；多副本谁来扫要先定</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>我们用的是后者的变体：任务先落表，投递侧推进状态，卡在中间态的由几条定时扫描捞起来继续推进（重试、聚合冲刷、升级各一条）。</p>
+
+    <p>选宽松形态的理由很实在：<strong>通知这件事本来就不需要"业务与消息原子"</strong>。决议的产物是"要通知谁"，即便某次多产出一条重复任务，投递侧的幂等键也会把它挡住；反过来，为了原子性引入 relay 与重复发布处理，复杂度不成比例。</p>
+
+    <p>但宽松形态有两个必须回答的问题：</p>
+
+    <ul>
+      <li><strong>谁来扫？</strong>多副本下如果每台都扫，就会重复推进同一个任务。要么用<strong>租约</strong>让同一时刻只有一台在扫，要么让扫描本身依赖幂等（扫到了先抢、抢不到就走）。散弹式的"大家一起扫"是最容易埋雷的写法。</li>
+      <li><strong>扫的粒度？</strong>全表扫是灾难。必须按「状态 + 时间」建索引，只捞那些"卡在中间态且超过 N 分钟"的行，而且要有条数上限——扫描任务自己也需要背压。</li>
+    </ul>
+
+    <p>这就是为什么第六节和第七节要连着看：<strong>outbox 回答"为什么隔一张表"，台账回答"这张表长什么样"</strong>。</p>
+
+    <h2>七、台账：投递的唯一事实来源</h2>
+
+    <p>台账是这一层的核心，它要同时满足三个要求：唯一、可推进、可回查。</p>
+
+    <h3>① 唯一：每条投递任务只有一行</h3>
+
+    <p>决议可能因为重试而重复产出同一个任务，所以任务要有<strong>幂等键</strong>——最自然的是「告警 id + 接收人 + 渠道」。有了唯一索引，重复产出只会撞键，不会变成两条投递。</p>
+
+    <p>这一步是多副本安全的基础：两台机器同时处理同一个任务，只有一台能成功插入，另一台直接放弃。</p>
+
+    <p>顺便澄清一个常见混淆：<strong>投递台账不是告警记录</strong>。台账回答的是"这条通知发给了谁、发到哪一步了"，它的生命周期跟着一次投递；而告警记录回答的是"这个故障什么时候发生、什么时候恢复"，它是业务事实，要长期保留、可审计。两者是两张表、两套保留策略，混成一张的后果是——要么台账把告警表撑爆，要么告警的审计字段被投递细节污染。
+
+    <h3>② 可推进：状态机而不是「成功 / 失败」</h3>
+
+    <p>投递不是二元的成功或失败，它中间有几个明确的状态，把它们记下来比记一个布尔值有用得多：</p>
+
+    <figure>
+      <svg viewBox="0 0 880 200" role="img" aria-label="投递台账的状态机">
+        <defs>
+          <marker id="a14" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <rect x="16" y="70" width="130" height="56" rx="8" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="81" y="94" text-anchor="middle" font-size="13" fill="#2c3e50">已生成</text>
+        <text x="81" y="112" text-anchor="middle" font-size="11" fill="#7f8c8d">落台账</text>
+
+        <path d="M146,98 L186,98" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a14)"/>
+
+        <rect x="192" y="70" width="140" height="56" rx="8" fill="#fff" stroke="#d6dae3"/>
+        <text x="262" y="94" text-anchor="middle" font-size="13" fill="#2c3e50">已提交渠道</text>
+        <text x="262" y="112" text-anchor="middle" font-size="11" fill="#7f8c8d">拿到受理号</text>
+
+        <path d="M332,90 L382,70" stroke="#3f9a63" stroke-width="1.5" marker-end="url(#a14)"/>
+        <path d="M332,106 L382,126" stroke="#b06a6a" stroke-width="1.5" marker-end="url(#a14)"/>
+
+        <rect x="388" y="38" width="150" height="56" rx="8" fill="#eef7f1" stroke="#3f9a63"/>
+        <text x="463" y="62" text-anchor="middle" font-size="13" fill="#2c3e50">已送达</text>
+        <text x="463" y="80" text-anchor="middle" font-size="11" fill="#3f9a63">回执确认</text>
+
+        <rect x="388" y="110" width="150" height="56" rx="8" fill="#fdf3f3" stroke="#d98b8b"/>
+        <text x="463" y="134" text-anchor="middle" font-size="13" fill="#2c3e50">已失败</text>
+        <text x="463" y="152" text-anchor="middle" font-size="11" fill="#b06a6a">带原因码 · 不自动重试</text>
+
+        <rect x="596" y="64" width="200" height="64" rx="8" fill="#fafbfc" stroke="#d6dae3" stroke-dasharray="4 3"/>
+        <text x="696" y="88" text-anchor="middle" font-size="12" fill="#2c3e50">回执对账</text>
+        <text x="696" y="108" text-anchor="middle" font-size="11" fill="#8a9199">谁没回来，谁就是缺口</text>
+
+        <path d="M538,66 L590,88" stroke="#9aa4b2" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a14)"/>
+        <path d="M538,138 L590,110" stroke="#9aa4b2" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a14)"/>
+
+        <text x="16" y="192" font-size="11" fill="#8c8c8c">「已提交」不等于「已送达」——这两个状态之间的差，就是绝大多数投诉的来源。</text>
+      </svg>
+      <figcaption>台账的状态机：每个状态都能回答一个具体问题</figcaption>
+    </figure>
+
+    <p>第三个状态尤其重要：<strong>「已提交渠道」不等于「已送达」</strong>。网关受理只代表它接了这个请求，真正到达用户手机是另一回事。把这两个状态分开记，才能在用户说"我没收到"时，准确说出是"我们没发"还是"发了但没到"。</p>
+
+    <h3>③ 可回查：失败要带原因，而不是一个 false</h3>
+
+    <p>失败的原因决定了处置方式，所以台账里必须存原因码：</p>
+
+    <ul>
+      <li><strong>地址不可用</strong>（空号、token 失效）→ 反馈到绑定表，人工确认；</li>
+      <li><strong>渠道限流</strong> → 可以延后补发；</li>
+      <li><strong>内容被拒</strong>（模板不匹配、长度超限）→ 是配置问题，必须报警；</li>
+      <li><strong>超时未知</strong> → 最麻烦：不知道对方收没收到。按 at-most-once 不重试，标记为"待人工确认"。</li>
+    </ul>
+
+    <p>最后一条是这个设计里最难、也最诚实的一处：<strong>有些情况就是不可知的</strong>。诚实地记成"未知"，比猜一个"成功"或"失败"都有用。</p>
+
+    <h2>八、回执与对账</h2>
+
+    <p>投递之后，回执会以异步方式回来，而且<strong>不一定每条都回来</strong>——不同渠道的回执质量差别很大，有的几乎总能回来，有的一直不齐。</p>
+
+    <p>所以对账是必需的，而它只问一个问题：<strong>提交了的，回来没有？</strong></p>
+
+    <table>
+      <thead>
+        <tr><th>情形</th><th>含义</th><th>处置</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>提交了、回执成功</td><td>确实送达</td><td>正常，归档</td></tr>
+        <tr><td>提交了、回执失败</td><td>确实没送达</td><td>按原因码处置（地址 / 内容 / 限流）</td></tr>
+        <tr><td><strong>提交了、回执没来</strong></td><td><strong>未知</strong></td><td>超时后标记待确认，<strong>计入缺口指标</strong>，不自动重试</td></tr>
+      </tbody>
+    </table>
+
+    <p>第三行的数量本身就是个很重要的指标：<strong>「提交了但没有回执」的条数</strong>。它长期为零说明对账跑通；它突然上涨说明渠道侧的回执接口出了问题——而此时投递看起来一切正常，因为该发的都发出去了。</p>
+
+    <p>这正是这篇的一个伏笔：<strong>投递链路的健康度，不能只看"成功率"</strong>。成功率的分母是"提交了多少"，而真正该盯的是<strong>「发出了多少」与「确认送达了多少」之间的差</strong>。</p>
+
+    <p>具体来说，这条链上有四个数值得常驻在看板上：</p>
+
+    <table>
+      <thead>
+        <tr><th>指标</th><th>它回答什么</th><th>异常时的含义</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>提交量 − 回执量</strong></td><td>有多少条下落不明</td><td>渠道侧的回执接口出问题了</td></tr>
+        <tr><td><strong>限流拒绝量</strong></td><td>有多少人这个小时被压住</td><td>要么真有风暴，要么额度配得太紧</td></tr>
+        <tr><td><strong>地址失效量</strong></td><td>有多少绑定已经过期</td><td>人事/权限数据没同步，需要清理</td></tr>
+        <tr><td><strong>卡在中间态的任务数</strong></td><td>扫描器有没有在干活</td><td>扫描停了，或者租约卡住了</td></tr>
+      </tbody>
+    </table>
+
+    <p>这四个数有一个共同的特性：<strong>它们都不在"成功/失败"这个维度上</strong>。成功率高不代表没有缺口，失败率高也不一定代表用户没收到——真正解释问题的是"量差"，而不是"比率"。</p>
+
+    <h2>九、边界：什么时候不用这么较真</h2>
+
+    <ul>
+      <li><strong>只有站内渠道</strong>。通知只推给页面和内部 IM，没有第三方网关，重复的代价很低，at-least-once 反而更简单。</li>
+      <li><strong>不承担时效责任</strong>。比如每日汇总，晚半小时、偶尔丢一天都无所谓，台账与回执对账都可以简化。</li>
+      <li><strong>渠道本身提供幂等键</strong>。少数企业级网关支持去重键，此时可以放心用 at-least-once。</li>
+      <li><strong>量极小</strong>。一天几十条通知，人工核对都比建台账便宜——但要写下这个前提，它通常会在业务规模化后失效。</li>
+    </ul>
+
+    <h2>下一篇</h2>
+
+    <p>告警产生了、通知发出去了，还有一件必须做的事：<strong>把它记下来</strong>——不是记在通知台账里，而是记成一条可查询、可审计、可追溯的告警记录。下一篇讲告警审计存储：为什么分区表拿不到全局唯一，以及怎么用一个「时间锚」把分区与幂等键这对矛盾解开。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
