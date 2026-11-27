@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>告警判定：为什么瓶颈不在规则 - IoT 高并发实时数据链路</title>
+  <title>告警判定：为什么瓶颈不在规则而在全量逐点都要判对 - IoT 高并发实时数据链路</title>
   <meta name="description" content="加规则几乎不涨成本，加点才涨。因为真正的开销不是规则求值，而是每个点都要读一次「上次值」与「当前状态」——而这一读放在哪，决定了差一个数量级。">
   <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
   <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -28,12 +28,12 @@
 
   <article class="post-body">
 
-    <h1>告警判定——为什么瓶颈不在规则</h1>
+    <h1>告警判定——为什么瓶颈不在规则而在全量逐点都要判对</h1>
     <div class="post-meta">IoT 高并发实时数据链路 · 第 11 篇</div>
 
     <div class="takeaway">
       <p>大多数人以为告警系统的瓶颈在"规则太多"。实际上<strong>加规则几乎不涨成本，加点才涨</strong>——因为开销不在求值，而在「每个点都要读一次上次值和当前状态」。</p>
-      <p>而这一读放在哪，直接决定了差一个数量级：放进程内是纳秒，放 Redis 是微秒加网络。这个差距能不能拿到，取决于一个更早的决定——<strong>分区键是不是选了设备</strong>。</p>
+      <p>而这一读放在哪，直接决定了差一个数量级：放进程内是纳秒，放 Redis 是微秒加网络。更关键的是——<strong>读到的必须是这台设备自己的状态，否则判得再快也是错的</strong>。这两件事（快、且对）取决于同一个更早的决定：<strong>分区键是不是选了设备</strong>。</p>
     </div>
 
     <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
