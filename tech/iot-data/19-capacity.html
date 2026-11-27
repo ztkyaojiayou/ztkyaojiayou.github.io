@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>容量与压测：怎么标定每一层的上限 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="压测最难的不是加压，而是证明你压的就是你以为的那个东西。以及为什么离线基准提升 48 倍，线上只兑现 3.4 倍。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>容量与压测——怎么标定每一层的上限</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 19 篇</div>
+
+    <div class="takeaway">
+      <p>压测最难的从来不是加压，而是<strong>证明你压的就是你以为的那个东西</strong>。我们在这上面栽过六次：施压器自己就是瓶颈、施压器自报吞吐高估近一倍、限核根本没生效、验收取的是解析之前的计数器。</p>
+      <p>第二件事更难接受：<strong>离线基准提升 48 倍，线上只兑现 3.4 倍</strong>。离线 bench 只能用来定位瓶颈，不能用来外推容量。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。凡标注"外推"的，是未在本环境实测的推算值。</em></p>
+
+    <h2>一、容量不是算出来的</h2>
+
+    <p>容量当然可以先算：把每层的每秒输入乘出来，再除以某个"单实例能扛多少"。但这个算法的前提几乎全是假设——报文多大、点怎么分布、批量攒多大、下游多快。这些假设里只要有一个错，算出来的数就没有意义。</p>
+
+    <p>所以容量最终只有一种来源：<strong>在真实的数据形态下，逐级加压，直到它开始变坏的那一档。</strong></p>
+
+    <p>而"开始变坏"这件事，比听起来难判断得多。这一篇实际上只回答三个问题：</p>
+
+    <ol>
+      <li><strong>压的到底是不是真实系统？</strong>——施压器、限核、数据形态，任何一环失真，整轮结论作废；</li>
+      <li><strong>验收看哪一侧？</strong>——看错了指标，绿灯可以是假的；</li>
+      <li><strong>哪一档才算合格？</strong>——过载时的数字往往更漂亮。</li>
+    </ol>
+
+    <p>这三个问题，我们都给过一个"看起来很对、其实是假的"答案。</p>
+
+    <h2>二、先证伪：压测本身可能是假的</h2>
+
+    <p>下面六条，每一条都真实发生过，每一条都导致过一整轮结论作废。它们的共同点是：<strong>当时没有任何报错</strong>。</p>
+
+    <table>
+      <thead>
+        <tr><th>坑</th><th>当时的现象</th><th>实际意味着</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>空载假通过</strong></td>
+          <td>每档都是"零负载 → lag=0 → 通过"，一整张全绿表</td>
+          <td>施压器根本没起来，触发脚本的请求静默失败了</td>
+        </tr>
+        <tr>
+          <td><strong>施压器自己到顶</strong></td>
+          <td>单实例封顶约 <strong>13,200 批/s</strong>——而设计顶格恰好 12,000</td>
+          <td>测出来的是发生器的容量，不是被测系统的</td>
+        </tr>
+        <tr>
+          <td><strong>施压器自报高估</strong></td>
+          <td>工具自报 608,591，broker 侧实际 376,600（<strong>1.6~1.9×</strong>）</td>
+          <td>凭空多出半倍吞吐</td>
+        </tr>
+        <tr>
+          <td><strong>限核没生效</strong></td>
+          <td>只绑了 0–3 号核，JVM 仍按 16 核开 <strong>13 条 GC 线程</strong></td>
+          <td>整轮"限核压测"的前提是假的</td>
+        </tr>
+        <tr>
+          <td><strong>验收取错侧</strong></td>
+          <td>前置的计数器在 JSON 解析<strong>之前</strong>自增，坏报文照样涨</td>
+          <td>据此判过"冒烟通过"，而 Kafka 里一条没有</td>
+        </tr>
+        <tr>
+          <td><strong>数据形态不对齐</strong></td>
+          <td>压测模型只有 145 个点；142 个负荷属性全挂在同一个设备上</td>
+          <td>压的不是设计的那个世界</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>挑三条最值得说的展开。</p>
+
+    <h3>施压器必须自证，否则它测的是自己</h3>
+
+    <p>"单实例封顶 13,200 批/s"这件事，是我们最该早点知道却最晚知道的。设计顶格是 12,000 批/s，压测跑出来"达成 99%"，看起来完美——实际上被压的那条链还有富余，<strong>卡住的是发生器</strong>。拆成两个实例之后，兑现率才回到 99% 并继续上升。</p>
+
+    <p>所以施压侧至少要盯三样东西：<strong>超发计数</strong>（持续增长说明这一档作废）、<strong>实际达成与目标之比</strong>、<strong>发送失败数</strong>。这三样有任何一样不对，"吞吐上不去"就不能归因给被测系统。</p>
+
+    <p>还有一层：<strong>施压器的自报数字不能直接用</strong>。上面那次高估 1.6~1.9 倍的例子，原因在于是它统计的"已提交到发送缓冲"而不是"broker 已收到"。正确做法是拿<strong>另一侧</strong>的计数交叉验证——broker 侧收到的消息数，或者干脆看网络回环字节。两边对不上时，永远信离数据更近的那一侧。</p>
+
+    <h3>限核这件事，比想象中容易假</h3>
+
+    <p>为了模拟线上小规格，我们把进程绑到 4 个核上跑。结果那台机器上依然是 13 条并行 GC 线程——因为 JVM 判断"机器有几个核"走的是系统调用，<strong>不看进程亲和性</strong>。绑核只改变了调度，没改变任何"我该开多少线程"的判断。</p>
+
+    <p>正确做法是用<strong>配额</strong>而不是亲和性，然后<strong>自证三行</strong>：配额生效了没有、GC 线程数是几、初始堆是多大。这三行不打出来，后面所有关于"小规格下能扛多少"的数字都不用看——因为你根本不知道它跑在什么配置上。</p>
+
+    <h3>验收要取最靠近落地的那一侧</h3>
+
+    <p>前置层的计数器是在报文解析<strong>之前</strong>自增的。这意味着即使报文全坏、一个点都没往下游送，那个数依然会优雅地上涨，"丢失点数"依然是零。我们据此判过一次"冒烟通过"，而下游一条数据都没有。</p>
+
+    <p>修好之后的判据很干净：<strong>前置的增量、消息层的增量、两者必须相等</strong>。验收点要放在"数据真的落地了"那一侧，而不是"流程走过了"那一侧。</p>
+
+    <blockquote>
+      压测里每一个"通过"，都必须能回答：<b>这个绿灯，是谁在看、看的是哪一侧？</b>
+    </blockquote>
+
+    <h2>三、阶梯法：找拐点，不是找最大值</h2>
+
+    <p>证伪做完，才轮到加压。而加压的第一步就要放弃一个直觉——<strong>不要去找"它最多能跑多少"</strong>。</p>
+
+    <p>原因是过载态的数字往往更漂亮。历史写入改造前，干净口径下的安全承载约 <strong>25 万点/s</strong>；而它在过载冲刷时能刷出 <strong>56.8 万点/s</strong>——翻了一倍多。为什么？因为那时候它<strong>已经开始丢数据了</strong>：丢掉的是排不进队的那部分，而吞吐统计的是"处理过多少"。数字变好，是因为系统换了一种坏法。</p>
+
+    <p>所以阶梯法的目标只有一个：<strong>找到"从好变坏"的那一档</strong>。四条纪律缺一不可：</p>
+
+    <ul>
+      <li><strong>每档跑够时间</strong>（我们用的是 5 分钟），太短会被启动预热掩盖；</li>
+      <li><strong>档与档之间静置</strong>（我们用 60 秒）。背靠背连跑会把可用连接数从 5.4 万砍到 2.8 万——端口还没回收完，而速率正比于真实连接数，于是后一档被前一档的残留拖累；</li>
+      <li><strong>每档先把位点重置到最新</strong>，让 lag 从零起跑。否则上一档的积压会算进这一档，拐点位置全错；</li>
+      <li><strong>判据是"运行期间 lag 是否上涨"，不是"停压后能否排空"</strong>。后者太宽：我们有一档结束时已经积压了 <strong>10 万多条</strong>，但因为停压后最终排空了，被判成"通过"。排队能排空只说明它还没死，不说明它跟得上。</li>
+    </ul>
+
+    <p>按这四条跑出来的阶梯，读数才有意义。下面是三条真实的阶梯：</p>
+
+    <table>
+      <thead>
+        <tr><th>层</th><th>逐档输入</th><th>稳定吞吐</th><th>lag 表现</th><th>端到端 p50</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td rowspan="4"><strong>历史写入</strong></td>
+          <td>2,000 设备</td><td>284k–292k 点/s</td><td>0</td><td>84 ms</td>
+        </tr>
+        <tr><td>4,000 设备</td><td>555k–606k</td><td><strong>0，两档复现</strong></td><td>168 ms</td></tr>
+        <tr><td>6,000 设备</td><td>766k–815k</td><td>0，但待处理量缓涨 = <strong>临界</strong></td><td>285 ms</td></tr>
+        <tr><td>8,000 设备</td><td>835k–969k</td><td><strong>落后约 45k 点/s</strong></td><td>10,733 ms</td></tr>
+        <tr>
+          <td rowspan="4"><strong>实时快照</strong></td>
+          <td>2,000 设备</td><td>2,000 批/s</td><td>≈0</td><td>193 ms</td>
+        </tr>
+        <tr><td>4,000 设备</td><td>3,994–3,996</td><td>0</td><td>436 ms</td></tr>
+        <tr><td>6,000 设备</td><td>4,659–5,381</td><td><strong>+290,378</strong></td><td><strong>38.1 s</strong></td></tr>
+        <tr><td>12,000 设备</td><td>2,287–4,992</td><td><strong>+1,338,814</strong></td><td><strong>116 s</strong></td></tr>
+        <tr>
+          <td rowspan="1"><strong>接入前置</strong></td>
+          <td>2k / 5k / 7k / 10k / 12k</td>
+          <td>2,000 / 4,807 / 6,144 / 6,856 / 7,827</td>
+          <td><strong>峰值 8,061 后回落</strong></td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>三张表放在一起看，能得到一个比任何单点数字都重要的结论：<strong>拐点处的延迟是跳变的，不是渐变的。</strong></p>
+
+    <p>历史在 4,000 设备档延迟 168ms、6,000 档 285ms，看着还算线性；到 8,000 档直接 <strong>10,733ms</strong>——涨了将近 40 倍。实时更夸张：4,000 档 436ms，6,000 档 <strong>38.1 秒</strong>。这不是"慢了一点"，这是<strong>换了一个数量级</strong>。</p>
+
+    <figure>
+      <svg viewBox="0 0 880 290" role="img" aria-label="负载与吞吐的关系：过拐点后回落">
+        <defs>
+          <marker id="a19" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <!-- 三个区带 -->
+        <rect x="92" y="40" width="360" height="210" fill="#f5faf7"/>
+        <rect x="452" y="40" width="110" height="210" fill="#fdf9f0"/>
+        <rect x="562" y="40" width="200" height="210" fill="#fdf5f5"/>
+
+        <text x="272" y="62" text-anchor="middle" font-size="12" fill="#3f9a63">安全区</text>
+        <text x="507" y="62" text-anchor="middle" font-size="12" fill="#a8802a">临界</text>
+        <text x="662" y="62" text-anchor="middle" font-size="12" fill="#b06a6a">过载</text>
+
+        <!-- 坐标轴 -->
+        <line x1="92" y1="250" x2="800" y2="250" stroke="#c9cfd8"/>
+        <line x1="92" y1="250" x2="92" y2="40" stroke="#c9cfd8"/>
+        <text x="800" y="272" text-anchor="end" font-size="12" fill="#8c8c8c">输入负载 →</text>
+        <text x="82" y="46" text-anchor="end" font-size="12" fill="#8c8c8c">吞吐 ↑</text>
+
+        <!-- 理想线 -->
+        <line x1="92" y1="250" x2="762" y2="30" stroke="#dfe3ec" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <text x="700" y="52" font-size="11" fill="#aab1bb">理想：吞吐 = 负载</text>
+
+        <!-- 实测曲线 -->
+        <path d="M92,250 L452,124 L512,112 L612,140 L762,196" fill="none" stroke="#667eea" stroke-width="2.5"/>
+        <path d="M452,124 L512,112" stroke="#d9a441" stroke-width="2.5"/>
+        <path d="M512,112 L612,140 L762,196" stroke="#b06a6a" stroke-width="2.5"/>
+
+        <!-- 拐点 -->
+        <line x1="512" y1="112" x2="512" y2="250" stroke="#d9a441" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="512" y="268" text-anchor="middle" font-size="11" fill="#a8802a">拐点：这里的数才是容量</text>
+
+        <text x="200" y="182" font-size="12" fill="#3f9a63">吞吐跟着负载走</text>
+        <text x="200" y="200" font-size="11" fill="#8a9199">系统还没到瓶颈，加多少吃多少</text>
+
+        <text x="600" y="176" font-size="12" fill="#b06a6a">再加负载，吞吐反而下降</text>
+        <text x="600" y="194" font-size="11" fill="#8a9199">此时统计到的数字可能更大——因为它已在丢</text>
+      </svg>
+      <figcaption>容量取拐点，不取最大值：过载段的吞吐回落，而它旁边的"处理量"统计往往更好看</figcaption>
+    </figure>
+
+    <h2>四、四种拐点，四种坏法</h2>
+
+    <p>"拐点"不是一个统一的现象。这条链上至少见过四种，它们变坏的方式完全不同——而<strong>怎么变坏，决定了你能不能在监控上看见它</strong>。</p>
+
+    <table>
+      <thead>
+        <tr><th>形态</th><th>在哪见过</th><th>拐点时发生了什么</th><th>看得见吗</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>平顶</strong></td>
+          <td>告警业务段</td>
+          <td>2,000 事件/s 时 lag 恒为 0；到 4,000 档 lag 直接跳到 <strong>67,536</strong></td>
+          <td>✅ lag 立刻可见</td>
+        </tr>
+        <tr>
+          <td><strong>回落</strong></td>
+          <td>接入前置</td>
+          <td>峰值 <strong>8,061 条/s</strong>，再加负载吞吐<strong>反而下降</strong></td>
+          <td>✅ 吞吐曲线自己会说话</td>
+        </tr>
+        <tr>
+          <td><strong>静默拉长</strong></td>
+          <td>边缘采集</td>
+          <td>配置 1 秒，实跑 <strong>2.6 秒</strong>；单实例拐点在 2,000–2,500 台设备</td>
+          <td>🔴 <strong>零告警</strong>，只能看周期</td>
+        </tr>
+        <tr>
+          <td><strong>假封顶</strong></td>
+          <td>Broker 慢订阅者</td>
+          <td>邮箱阈值掐断连接后重连归零，吞吐从 2,000 跳到 7,827</td>
+          <td>🔴 表现为"<strong>吞吐提升</strong>"</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>前两种是"良性"的：系统还能保持行为一致，只是跟不上，所以积压或延迟会明确地暴露它。</p>
+
+    <p>第三种很阴：采集周期被拉长，等于<strong>偷偷降了采样率</strong>。曲线会变稀，但没有一条错误日志、没有一个失败请求。它是我们压测时就发现的问题，而不是线上才发现的——这一点很关键：<strong>如果压测没测出它，线上可能半年都不会有人知道</strong>。</p>
+
+    <p>第四种最需要警惕，因为它伪装成成果。慢订阅者被 broker 保护机制掐断，客户端重连，重连后从零开始——于是压测工具看到一个"干净"的吞吐数字。<strong>如果你只看吞吐，会以为调优成功了。</strong>必须同时看<strong>重连计数</strong>，它才是这一类拐点的真正信号。</p>
+
+    <blockquote>
+      拐点的形态决定观测指标：<br>
+      平顶看积压、回落看吞吐、静默拉长看周期、假封顶看重连。
+    </blockquote>
+
+    <h2>五、48× 与 3.4×：离线基准只能定位，不能外推</h2>
+
+    <p>这一节是我最想写的一段，因为它不是"某个坑"，而是<strong>一类方法论上的错误</strong>。</p>
+
+    <p>历史写入这条路当时的状况是：每个实例只有一条写线程，其中 <strong>86.7% 的单核时间</strong>花在构造数据块上，而整机只吃掉 1.4/16 核。于是我们做了一个离线基准，直接测"写入的形状"对成本的影响：</p>
+
+    <table>
+      <thead>
+        <tr><th>每批行数</th><th>每行成本</th><th>相对</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1 行 / 批</td><td>0.22 ms/行</td><td>1×</td></tr>
+        <tr><td>20 行 / 批</td><td>0.0083 ms/行</td><td><strong>26×</strong></td></tr>
+        <tr><td>100 行 / 批</td><td>0.0046 ms/行</td><td><strong>48×</strong></td></tr>
+      </tbody>
+    </table>
+
+    <p>48 倍。这个数字是对的，而且有交叉验证：同样形状下，离线跑出约 65 万点/s，和线上单实例约 50 万点/s 是同一个量级——说明基准没有偏得太离谱。</p>
+
+    <p>于是改造上线。结果是：<strong>25 万 → 85 万点/s，3.4 倍</strong>（干净口径）。</p>
+
+    <p>48 倍变成 3.4 倍，差了一个数量级。为什么？</p>
+
+    <p>因为离线基准只测了那一步：<strong>数据给进去，写出去</strong>。而线上真实路径上还要走这么多步——</p>
+
+    <ol>
+      <li>列式缓冲区里的 <code>double[]</code> 要<strong>摊平成 20 万个对象</strong>；</li>
+      <li>再按（设备, 时间）<strong>重新聚回</strong>每个序列的行构造器；</li>
+      <li>每个点还要过一次正则<strong>清洗</strong>；</li>
+      <li>逐格<strong>构造类型对象</strong>。</li>
+    </ol>
+
+    <p>改造之后，写入的<strong>形状已经完全达标</strong>——实测每块 19–20 行、每次约 70 台设备、每批约 20 万点，正是基准里最好的那一档。可剩下的成本全部落在那四步上，而它们<strong>一步都不在基准的覆盖范围里</strong>。</p>
+
+    <p>由此有三条可以迁移到别处的教训：</p>
+
+    <ol>
+      <li><strong>基准的边界就是它结论的边界。</strong>它没测的那几步，成本不在它的数字里，而线上必须付。所以基准能回答"这一步值不值"，不能回答"整体能到多少"。</li>
+      <li><strong>形状达标不等于成本达标。</strong>形状对了只说明"批量是有效的"，不说明"剩下没有别的成本"。很多优化做到形状正确就以为到头了，其实真正的大头可能在形状后面的对象构造上。</li>
+      <li><strong>剩下的成本，往往在你自己写的那段代码里。</strong>存储、网络、序列化这些是"别人的"，瓶颈一旦落到自己的摊平、重聚、清洗上，就不再有任何现成的 benchmark 能替你说清楚——只能自己一段一段去测。</li>
+    </ol>
+
+    <p>所以规矩很简单：<strong>要规划容量，只能用端到端的阶梯数据；离线基准只用来判断方向。</strong>拿 48 倍的图去算机器数，最后交付的很可能是 1.1 倍。</p>
+
+    <h2>六、从单实例上限到实例数：三步</h2>
+
+    <p>标定完每一层的拐点，下一步才是"要几个实例"。这一步看着是除法，但有三个地方会算错。</p>
+
+    <h3>第一步：基数选哪个数</h3>
+
+    <p>同一个组件，我们的文档里同时存着三个数：<strong>过载时的刷写量</strong>、<strong>外推的容量上限</strong>、<strong>干净阶梯里 lag 归零的安全承载</strong>。</p>
+
+    <p>历史写入这一层，用外推的 85 万去算，得到 <strong>6 个实例</strong>；用实测的安全承载 568k 去算，得到 <strong>8 个</strong>。前者偏乐观了 25%。</p>
+
+    <p>这不是算术问题，是选择问题。而正确的选择有且只有一个：<strong>用干净阶梯里"lag 归零且能复现"的那一档</strong>。过载刷写不能用（那时在丢数据），外推不能用（那是线性假设的产物，而我们知道这条路的下游还有非线性）。</p>
+
+    <h3>第二步：为什么乘 40%</h3>
+
+    <p>算实例数的式子长这样：</p>
+
+    <blockquote>
+      实例数 ≥ 顶格负载 ÷（单实例安全承载 × <b>40%</b>）
+    </blockquote>
+
+    <p>这个 40% 经常被误读成"吞吐留四成余量"。<strong>不是。</strong>它是<strong>延迟余量</strong>。</p>
+
+    <p>因为这条链的端到端延迟是<strong>排队延迟</strong>，而排队延迟是悬崖型的：负载在容量以内时，延迟是百毫秒级；一旦越过拐点，延迟直接跳到几十秒（前面那张表：436ms → 38.1s）。它没有一个"慢慢变慢"的过渡带，所以你不能指望"用到 90% 再扩"。40% 就是给排队留出的空间——<strong>让每个实例都跑在离悬崖足够远的地方</strong>。</p>
+
+    <h3>第三步：三条约束取最严</h3>
+
+    <p>算出来的实例数只是下限之一。这个量级上至少要同时满足三条约束，取最严的那个：</p>
+
+    <table>
+      <thead>
+        <tr><th>约束</th><th>怎么来的</th><th>典型例子</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>吞吐下限</strong></td>
+          <td>前面那个除法</td>
+          <td>历史 1.704M ÷ (568k × 40%) = 7.5 ⇒ <strong>8</strong></td>
+        </tr>
+        <tr>
+          <td><strong>内存下限</strong></td>
+          <td>单实例内存 ÷ 每设备占用</td>
+          <td>实时快照约 0.7MB/设备，堆 4G 约容纳 4,000 设备 ⇒ 6,000 设备要 <strong>≥3</strong></td>
+        </tr>
+        <tr>
+          <td><strong>延迟下限</strong></td>
+          <td>40% 余量反推</td>
+          <td>实时按纯延迟尺算是 <strong>6</strong>，比吞吐尺更严</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>还有两条硬顶，和实例数无关但必须先算：<strong>每实例并发 × 实例数 ≤ 分区数</strong>（订阅到的分区不够，多出来的并发只是空转），以及<strong>消费线程数受分区数封顶</strong>。先加分区，再加实例——反过来做会白跑。</p>
+
+    <p>最后还有一个反例，专门用来打掉"规格统一"这个念头：</p>
+
+    <p><strong>把核数限下来，各层的损失完全不一样</strong>——实时快照掉 25%，告警判定掉 33%，而历史写入和业务段<strong>一点都没变</strong>。因为后两者的瓶颈是单线程或数据库往返，跟核数无关。所以"所有服务统一 4 核 8G"这种做法，既浪费（在不在乎核的层上）又危险（在在乎核的层上少给了）。<strong>规格要跟着瓶颈走，不跟着规范走。</strong></p>
+
+    <h2>七、一次压测的完整流程</h2>
+
+    <p>把前面几节收成一份可复制的清单，八步：</p>
+
+    <ol>
+      <li><strong>划边界</strong>：这次测哪一层、测到哪一段为止、哪些依赖是真起、哪些是桩；</li>
+      <li><strong>造数对齐形态</strong>：报文大小、每批点数、设备数、键的分布——全部按线上真实值，而不是"够用就行"；</li>
+      <li><strong>施压侧自证</strong>：超发计数、达成率、发送失败数，三样都为"正常"，这一档才开始算；</li>
+      <li><strong>空载对照</strong>：不施压跑一段，确认基线是零——这一步专治"施压器根本没起来"；</li>
+      <li><strong>阶梯加压</strong>：每档跑满时长、档间静置、位点重置，判据看运行期积压；</li>
+      <li><strong>拐点复现一次</strong>：同一个拐点跑两遍结论一致，才敢签字——我们只在"两档复现"的数据上下结论；</li>
+      <li><strong>写清口径</strong>：这个数是干净态还是过载态、是实测还是外推、取的是哪一侧的计数器；</li>
+      <li><strong>换算实例数</strong>：按 40% 与三条约束，并记录用的是哪个基数。</li>
+    </ol>
+
+    <p>最后补一条不是步骤、但比步骤重要的：<strong>任何结论都要带前提</strong>。我们的每份压测结论前面都写着一串限制——多少核不设限、中间件是否同机、除了堆大小之外是否零调参。没有这串前提，数字换一个环境就全不作数，而读的人不会知道。</p>
+
+    <h2>八、边界：什么时候不必压</h2>
+
+    <ul>
+      <li><strong>量远没到。</strong>设计峰值只有单实例上限的十分之一，压测的结论不会改变任何决策——先上线，等接近了再说。</li>
+      <li><strong>瓶颈在外部。</strong>耗时主要花在第三方网关或客户侧的采集器上，压自己这一侧测不出真相。</li>
+      <li><strong>单机就能算清。</strong>一条单进程、无中间件的链路，直接算比压测便宜。</li>
+      <li><strong>用的是托管服务且它有 SLA。</strong>容量由对方承诺，你要做的是验证而不是标定——但验证那一步不能省。</li>
+    </ul>
+
+    <p>还有一个不该省的例外：<strong>"自证施压器"这一步在任何规模下都省不得</strong>。它不需要多大成本，却能挡掉整轮假结论——这是性价比最高的一道检查。</p>
+
+    <h2>下一篇</h2>
+
+    <p>这一篇标定出了每一层能扛多少。下一篇把这些数落成具体形态：<strong>每一层用几个实例、什么规格、部署成什么样</strong>——以及从容量到规格之间那几步推导里，最容易算错的地方。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
