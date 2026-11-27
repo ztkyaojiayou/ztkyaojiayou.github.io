@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>性能优化：这个场景的高并发是哪一种 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="高并发写与高 QPS 是两种病。先认清是哪一种，才知道哪些优化有效——以及为什么有些流行手段在这里完全无效。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>性能优化——这个场景的"高并发"是哪一种</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 17 篇</div>
+
+    <div class="takeaway">
+      <p><strong>高 QPS</strong> 和 <strong>高并发写</strong> 是两种病，药方不一样。把互联网那套（加缓存挡读、无状态服务水平扩）搬过来，在这里大半会失效。</p>
+      <p>而这篇最想讲清楚的不是"有哪些优化手段"，而是<strong>哪些手段对我们无效、以及为什么</strong>——后者才是能迁移到别处的东西。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。凡标注"外推"的，是未在本环境实测的推算值。</em></p>
+
+    <h2>一、先定性：这个场景的"高并发"是哪一种</h2>
+
+    <p>「高并发」这个词被用得太宽，导致讨论经常错位。先把它拆开：</p>
+
+    <table>
+      <thead>
+        <tr><th>维度</th><th>典型互联网高并发</th><th>我们这个场景</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>并发形态</strong></td><td>大量互相独立的请求</td><td><strong>持续不断的高频写入</strong></td></tr>
+        <tr><td><strong>关键指标</strong></td><td>QPS、P99</td><td><strong>点/秒、吞吐量、积压</strong></td></tr>
+        <tr><td><strong>延迟容忍</strong></td><td>毫秒级</td><td><strong>秒级即可</strong>（采集周期本就 0.5–1.5 秒）</td></tr>
+        <tr><td><strong>读写比例</strong></td><td>读多写少</td><td><strong>写压倒性多于读</strong></td></tr>
+        <tr><td><strong>数据形态</strong></td><td>一条请求一条数据</td><td><strong>天然成批</strong>：一条报文约 140 点</td></tr>
+        <tr><td><strong>失败的代价</strong></td><td>重试一次即可</td><td><strong>丢了就是永久丢失</strong></td></tr>
+      </tbody>
+    </table>
+
+    <p>这张表的后四行尤其重要，因为它们直接推翻了几个默认套路：</p>
+
+    <ul>
+      <li><strong>「加缓存挡读」失效</strong>——因为读本来就不是瓶颈，写才是；</li>
+      <li><strong>「无状态服务水平扩」失效</strong>——因为大量环节是有序或单线程的（上一篇数了 12 处）；</li>
+      <li><strong>「提高并发度」常常失效</strong>——因为瓶颈在串行段或往返次数，不在并行度；</li>
+      <li><strong>「快速失败 + 重试」要谨慎</strong>——有些环节重试的代价是数据错（比如窗口聚合），不是延迟。</li>
+    </ul>
+
+    <p>所以这类场景的优化目标不是"更快响应"，而是<strong>「单位时间能吃下更多，同时不丢不错」</strong>。这一句看着朴素，但它决定了后面所有判断的方向：优先提吞吐，而不是压延迟；优先保正确，而不是抢速度。</p>
+
+    <h2>二、这类场景的通用策略</h2>
+
+    <p>脱离具体实现看，应对"高频写入"的策略只有六种。每一种降低的是<strong>不同种类</strong>的成本，这一点是后面判断"有没有用"的依据：</p>
+
+    <table>
+      <thead>
+        <tr><th>策略</th><th>降低的是哪种成本</th><th>代价</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>减量</strong></td>
+          <td>从源头少产生数据</td>
+          <td>会丢信息，必须证明丢的是无关信息</td>
+        </tr>
+        <tr>
+          <td><strong>攒批</strong></td>
+          <td>每次/每点的固定成本被摊薄</td>
+          <td>引入延迟与内存占用</td>
+        </tr>
+        <tr>
+          <td><strong>切分</strong></td>
+          <td>把串行变并行</td>
+          <td>分区一旦定了不可逆，改键会打乱顺序</td>
+        </tr>
+        <tr>
+          <td><strong>分流</strong></td>
+          <td>冷热、快慢、补发与实时分开走</td>
+          <td>多一套通路，多一份运维</td>
+        </tr>
+        <tr>
+          <td><strong>削峰</strong></td>
+          <td>把峰值摊给缓冲与限额</td>
+          <td>延迟变大，且要接受"被拒绝"</td>
+        </tr>
+        <tr>
+          <td><strong>异步</strong></td>
+          <td>把慢操作移出关键路径</td>
+          <td>一致性变弱，需要幂等与对账兜底</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>六种策略里，<strong>减量的收益最大、也最便宜</strong>，因为它是在源头解决问题；<strong>切分最不可逆</strong>；<strong>异步的隐藏成本最高</strong>（要配一整套一致性机制）。这个排序后面会反复用到。</p>
+
+    <h2>三、我们是怎么做的</h2>
+
+    <p>把六种策略映射到具体实现，就是这条链路上的优化清单：</p>
+
+    <table>
+      <thead>
+        <tr><th>策略</th><th>具体做法</th><th>效果</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>减量</strong></td>
+          <td>边缘变化上送 + 死区抑制 + 周期兜底</td>
+          <td>1 秒档实测约 <strong>30 倍</strong>压缩；三年数据体积一个数量级下移</td>
+        </tr>
+        <tr>
+          <td><strong>减量</strong></td>
+          <td>降采样 + 冷热分层 + 归档</td>
+          <td>存储体积再降一个台阶；过期整段丢弃而不是逐行删</td>
+        </tr>
+        <tr>
+          <td><strong>减量</strong></td>
+          <td>内存窗口聚合，绝不回读时序库</td>
+          <td>避开时序库"按设备整条读"的弱项</td>
+        </tr>
+        <tr>
+          <td><strong>攒批</strong></td>
+          <td>按设备组批（一条报文约 140 点）</td>
+          <td>消息率与点率解耦 <strong>140 倍</strong></td>
+        </tr>
+        <tr>
+          <td><strong>攒批</strong></td>
+          <td>写入侧累计一定量或等短窗口再提交</td>
+          <td>往返次数与序列化开销按批摊销</td>
+        </tr>
+        <tr>
+          <td><strong>攒批</strong></td>
+          <td>整批写入而非逐点/逐字段写</td>
+          <td>命令率跟着报文率走，而不是点率</td>
+        </tr>
+        <tr>
+          <td><strong>切分</strong></td>
+          <td>按设备分区（消息、消费、快照三处对齐）</td>
+          <td>保序与并行同源；状态可放进程内</td>
+        </tr>
+        <tr>
+          <td><strong>分流</strong></td>
+          <td>四路独立消费组；补发走独立通道</td>
+          <td>一路慢不拖累其他；旧数据不污染实时视图</td>
+        </tr>
+        <tr>
+          <td><strong>削峰</strong></td>
+          <td>有界缓冲 + 背压 + 推送侧限流与延迟队列</td>
+          <td>峰值被摊平；超限时延后而不是丢</td>
+        </tr>
+        <tr>
+          <td><strong>异步</strong></td>
+          <td>日志异步批量落库；通知用 outbox 交接</td>
+          <td>慢操作离开关键路径；可靠性由台账兜底</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>还有几条不属于六种策略、但收益很大的"小手段"，它们共同属于下一节说的"消除错误默认值"或"换资源"：</p>
+
+    <p>这些手段的<strong>组合效果不是相加</strong>：减量把总量压下去、攒批把剩余的量摊薄、切分把摊薄后的量并行——三者叠起来，同一条链路能承受的规模比单一手段高出一到两个数量级。这也解释了为什么前几篇总是反复回到这三招。</p>
+
+    <ul>
+      <li><strong>点表负缓存 + 本地缓存</strong>：查表从每秒百万次压到几万次，本地命中率约 96.5%；未建模的点走负缓存短路，不重复穿透；</li>
+      <li><strong>整设备一次取</strong>：读快照时一次取回整台设备的全部字段，而不是逐字段取——一次往返取回全部；</li>
+      <li><strong>压缩放在生产者侧</strong>：开启后实测压缩比约 <strong>6 倍</strong>，而且吞吐不降反升——因为不压时瓶颈是磁盘带宽，压完瓶颈后移了。</li>
+    </ul>
+
+    <h2>四、哪些有效、哪些无效、为什么</h2>
+
+    <p>真正有价值的部分在这里。下面这些，都是我们<strong>试过、然后放弃或回退</strong>的手段：</p>
+
+    <table>
+      <thead>
+        <tr><th>试过的手段</th><th>结果</th><th>为什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>把数据库连接池调大（想靠并发救写入）</td>
+          <td><strong>只提升约 12%</strong></td>
+          <td>写入的瓶颈不在"能同时发多少请求"，而在"每次请求值不值钱"</td>
+        </tr>
+        <tr>
+          <td>消费并发从 1 提到 4、再提到 8</td>
+          <td>1→4 有效（约 40%），<strong>4→8 完全无效</strong></td>
+          <td>瓶颈已经迁移到单实例的写线程上了；再加并发只是排队</td>
+        </tr>
+        <tr>
+          <td>消费线程从 8 提到 16</td>
+          <td>吞吐几乎不动</td>
+          <td>这一段受内存与 GC 限制，加线程买不到东西</td>
+        </tr>
+        <tr>
+          <td>只写变化的字段（diff）</td>
+          <td><strong>零吞吐收益，还多占约 1.4GB 内存</strong></td>
+          <td>它的前提是"每点每拍都可能变"，而这条链路的设计就是"每拍都写全"——diff 一比较，几乎条条都变</td>
+        </tr>
+        <tr>
+          <td>给分区表加覆盖索引</td>
+          <td>实测<strong>无收益</strong></td>
+          <td>查询本来就走分区裁剪后的窄范围</td>
+        </tr>
+        <tr>
+          <td>依赖分区裁剪提速</td>
+          <td><strong>不提速</strong>；带时间范围的读反而慢约 20%</td>
+          <td>分区规划本身有开销；分区的价值在"可整段丢弃"，不在"查得快"</td>
+        </tr>
+        <tr>
+          <td>把大 Hash 拆成很多小 key</td>
+          <td><strong>反而更费内存</strong></td>
+          <td>每个 key 都有固定开销；而且批量取时还会跨 slot</td>
+        </tr>
+        <tr>
+          <td>背压缓冲配小（想省内存）</td>
+          <td><strong>自锁</strong>：54 分钟内触发近三千次暂停/恢复，写入被钳住</td>
+          <td>缓冲太浅，一暂停就立刻见底，恢复后马上又满——正确的事配错了参数，就变成新的瓶颈</td>
+        </tr>
+        <tr>
+          <td>用发布订阅推送变化流</td>
+          <td>突发时<strong>静默踢掉订阅方</strong>；摘掉后吞吐反而 <strong>+13.6%</strong></td>
+          <td>它的过载行为是"丢弃订阅关系"而不是"背压"，而丢弃没有任何人知道</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>九条失败案例，归纳起来只有三个原因：</p>
+
+    <ol>
+      <li><strong>优化没有作用在当前瓶颈上。</strong>连接池、并发度、索引——它们各自都是好手段，但用错了地方就是浪费时间。</li>
+      <li><strong>瓶颈会迁移。</strong>第一次优化到 4 倍之后，第二个瓶颈往往已经换了位置；继续用同一招，收益为零。所以每做完一轮优化，都要<strong>重新找瓶颈</strong>，而不是把上一招加倍。</li>
+      <li><strong>有些"优化"在解决不存在的问题。</strong>diff 假设"大多数点没变"，而这条链路的前提是"每拍都发全"——两边的前提是矛盾的，优化自然不会有收益。</li>
+    </ol>
+
+    <blockquote>
+      性能优化最难的不是"知道有哪些手段"，而是<b>知道哪些手段对当前的你没有用</b>。
+    </blockquote>
+
+    <h3>还有一类更隐蔽的失败：优化对了，但口径错了</h3>
+
+    <p>九条无效案例之外，还有一种情况更麻烦——<strong>优化其实生效了，但你的衡量方式让你以为它没用，或者反过来</strong>。</p>
+
+    <p>三种常见的口径错误：</p>
+
+    <table>
+      <thead>
+        <tr><th>错误</th><th>表现</th><th>正确做法</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>拿天花板当实测</strong></td>
+          <td>报"压缩比 100 倍"，而实测只有 30 倍——前者是理论极限</td>
+          <td>永远同时给"实测值"和"理论上限"，并说明区别</td>
+        </tr>
+        <tr>
+          <td><strong>换了度量口径</strong></td>
+          <td>分母从"基准吞吐"换成"当前吞吐"，看起来提升很大</td>
+          <td>优化前后用同一个口径，且落到<strong>绝对量</strong>（条/秒、GB/天）</td>
+        </tr>
+        <tr>
+          <td><strong>在错误的负载下测</strong></td>
+          <td>小样本单机测出的结论，规模化后不成立</td>
+          <td>压测要覆盖真实的数据形态（批大小、点分布、突发）</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>第一条尤其容易犯。我见过一个很典型的例子：某次优化对外报"压缩比 30 倍"，而它的<strong>理论上限是 100 倍</strong>——两个数都对，但如果只报 100，就变成了把天花板当成实测；而如果有人拿 100 去规划容量，结果会差三倍。</p>
+
+    <p>所以这条链路上有个规矩：<strong>任何性能数字都要带三样东西——测的是什么、在什么负载下、是实测还是推算。</strong>缺一样，它就不能拿去规划。</p>
+
+    <h2>五、一轮完整的优化序列</h2>
+
+    <p>抽象地讲"瓶颈会迁移"没意思，看一个真实的过程更清楚。下面是历史写入这条路上的一轮完整优化：</p>
+
+    <figure>
+      <svg viewBox="0 0 860 250" role="img" aria-label="优化过程中瓶颈的迁移">
+        <defs>
+          <marker id="a17" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <line x1="60" y1="200" x2="820" y2="200" stroke="#c9cfd8"/>
+
+        <rect x="80" y="160" width="110" height="40" fill="#dfe3ec"/>
+        <text x="135" y="186" text-anchor="middle" font-size="12" fill="#2c3e50">起点</text>
+        <text x="135" y="222" text-anchor="middle" font-size="11" fill="#8c8c8c">往返次数是瓶颈</text>
+
+        <rect x="230" y="120" width="110" height="80" fill="#cfd8f5"/>
+        <text x="285" y="166" text-anchor="middle" font-size="12" fill="#2c3e50">攒批+列式</text>
+        <text x="285" y="222" text-anchor="middle" font-size="11" fill="#667eea">+45~62%</text>
+
+        <rect x="380" y="96" width="110" height="104" fill="#c3d0f0"/>
+        <text x="435" y="152" text-anchor="middle" font-size="12" fill="#2c3e50">连接复用</text>
+        <text x="435" y="222" text-anchor="middle" font-size="11" fill="#8c5a5a">写只 +12%（顺带修好了读）</text>
+
+        <rect x="530" y="70" width="110" height="130" fill="#b6c6ea"/>
+        <text x="585" y="140" text-anchor="middle" font-size="12" fill="#2c3e50">直通优化</text>
+        <text x="585" y="222" text-anchor="middle" font-size="11" fill="#8c8c8c">瓶颈已变成 tablet 构造</text>
+
+        <rect x="680" y="46" width="110" height="154" fill="#a9bbe4"/>
+        <text x="735" y="128" text-anchor="middle" font-size="12" fill="#2c3e50">加实例</text>
+        <text x="735" y="222" text-anchor="middle" font-size="11" fill="#3f9a63">接近线性（2 实例 ≈ 2×）</text>
+
+        <path d="M190,170 L226,170" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a17)"/>
+        <path d="M340,140 L376,140" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a17)"/>
+        <path d="M490,120 L526,120" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a17)"/>
+        <path d="M640,100 L676,100" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a17)"/>
+
+        <text x="60" y="30" font-size="12" fill="#8c8c8c">每一阶的收益都比上一阶小，直到发现"调参"已经没用，剩下唯一的路是加实例</text>
+      </svg>
+      <figcaption>同一条链路、同一个目标：瓶颈从"往返次数"一路迁到"数据块构造"，最后只能靠加实例</figcaption>
+    </figure>
+
+    <ol>
+      <li><strong>起点：往返次数是瓶颈。</strong>每写一次都要一次网络往返，机器闲着但吞吐上不去。</li>
+      <li><strong>第一轮：攒批 + 列式缓冲 + 批量提交。</strong>把多次往返压成少数几次，实测提升 <strong>45%~62%</strong>。</li>
+      <li><strong>第二轮：连接复用（会话池）。</strong>写入只提升 <strong>约 12%</strong>——因为往返已经不是瓶颈了；但<strong>顺带把读从被写饿死中救了出来</strong>，读吞吐翻了两倍。</li>
+      <li><strong>第三轮：直接构造写入结构，跳过中间对象。</strong>这时候时间已经集中在"构造数据块"本身——单核 86% 都耗在这一件事上。</li>
+      <li><strong>最后：加实例。</strong>因为单实例的串行段已经榨干，剩下的唯一杠杆就是并行——实测两实例接近线性（约 2 倍）。</li>
+    </ol>
+
+    <p>这个过程最能说明第四节的第 2 条原因：<strong>每一轮优化的收益都在变小，而瓶颈的位置每一轮都换了</strong>。第一轮是"往返"，第二轮是"锁"，第三轮是"CPU 里的构造"，最后是"单实例串行度"。</p>
+
+    <p>它也给了一个实用的判断：<strong>当你发现"调任何参数都没反应"时，说明瓶颈已经不在可调项里了</strong>——这时候加机器或者改架构，才是正确的方向。</p>
+
+    <h2>六、一类特殊的优化：消除错误默认值</h2>
+
+    <p>上面六种策略都是"做点什么"。但有一类优化是"什么都不做，只是把默认值改对"——它们的性价比往往最高，因为<strong>不需要换任何资源，只是纠正了一个错误假设</strong>。</p>
+
+    <table>
+      <thead>
+        <tr><th>默认值的问题</th><th>改成什么</th><th>后果</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>堆大小按宿主机的比例推算</td>
+          <td><strong>显式指定</strong>，并把初始与最大设成同一个值</td>
+          <td>不指定时堆会"慢慢长起来"，期间多付一类 GC 抖动</td>
+        </tr>
+        <tr>
+          <td>GC 线程数按宿主机核数算</td>
+          <td>按<strong>容器实际配额</strong>钉死</td>
+          <td>不钉时一个 4 核的容器可能按 16 核开线程，白白抢 CPU</td>
+        </tr>
+        <tr>
+          <td>连接池用框架默认值</td>
+          <td><strong>不小于消费并发数</strong></td>
+          <td>实测过并发开到 16、池还是 10——多出来的并发全在等连接</td>
+        </tr>
+        <tr>
+          <td>缓存内存不设上限</td>
+          <td><strong>显式设上限 + 禁止淘汰</strong></td>
+          <td>不设上限会被系统 OOM 杀掉，整条实时路消失；宁可写失败，也不要静默丢</td>
+        </tr>
+        <tr>
+          <td>容器内存限额等于堆大小</td>
+          <td>限额 = <strong>堆 + 0.5～1G</strong></td>
+          <td>非堆（元空间、线程栈、堆外缓冲）没算进去，会被 OOMKilled</td>
+        </tr>
+        <tr>
+          <td>投产前不预建元数据</td>
+          <td>空载时先把序列/表结构建完再放流量</td>
+          <td>实测过 schema 没建完的窗口里，几分钟就丢了近亿个点</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>这一类有一个共同特征：<strong>它们出错时不会有任何报错</strong>。堆没设好只是"GC 多一点"，池没设好只是"偶尔排队"——都很容易被当成"正常波动"忽略掉，直到某天压测才发现并发根本没生效。</p>
+
+    <h2>七、拿到一个优化方案，先问四个问题</h2>
+
+    <ol>
+      <li><strong>它降低的是哪一类成本？</strong>减量、摊薄、切分、分流、削峰、还是异步？——说不上来的，多半是"听起来有道理"。</li>
+      <li><strong>当前瓶颈在这一类上吗？</strong>如果瓶颈是单线程的写段，加并发再多也没用。</li>
+      <li><strong>它需要什么前提？</strong>diff 需要"大多数点没变"，覆盖索引需要"查询要扫很多行"——前提不成立，收益就是零。</li>
+      <li><strong>它的代价是什么、我付得起吗？</strong>异步要配幂等与对账，攒批要接受延迟，减量要证明丢的是无关信息。</li>
+    </ol>
+
+    <p>还有一个前置动作：<strong>先把基线测出来</strong>。没有一组可复现的基线数字，这四个问题都没有参照物——你会不知道当前瓶颈在哪，也就判断不了"这个方案作用在哪"。</p>
+
+    <p>四个问题问下来，大部分方案会被否掉。而<strong>能提前否掉一个无效方案，比事后优化三次都值钱</strong>——因为它省掉的不只是那一次改动，还有改错之后排查"为什么没效果"的时间。</p>
+
+    <h2>八、边界：什么时候不必谈优化</h2>
+
+    <ul>
+      <li><strong>量还没到。</strong>每秒几千点的规模，一条朴素链路就能跑，这时候做优化是纯粹的提前支出。</li>
+      <li><strong>瓶颈是别人的。</strong>如果耗时主要花在第三方网关，优化自己这一侧几乎没有意义。</li>
+      <li><strong>还没有基线。</strong>没有一组可复现的压测数字，任何"优化了 3 倍"都不可信——先有基线，再谈优化。</li>
+      <li><strong>改的是错误默认值。</strong>这一类不需要论证，先改对再说——它几乎不可能有害。</li>
+    </ul>
+
+    <p>最后留一句判断：<strong>如果一个优化方案说不出"它降低的是哪一类成本、当前瓶颈在不在这上面"，那它大概率是在浪费时间</strong>。而这条链路上真正奏效的优化，回头看都很朴素——少发、攒批、按设备切、把默认值改对。</p>
+
+    <h2>下一篇</h2>
+
+    <p>这一篇讲的是"怎么让链路快起来"。下一篇换一个更根本的问题：这条链上到处都在写、且没有分布式事务，<strong>那么多处写入靠什么收敛？</strong>——不复述前面各篇的机制，而是把它们归纳成一张总表、几个可复用的模式，以及一份诚实的"哪里明确放弃了强一致"。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>

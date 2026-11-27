@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IoT 高并发实时数据链路 - 系列文章</title>
-  <meta name="description" content="亿级报文从边缘采集到时序存储的架构设计与工程落地。十九篇分三段：数据怎么流、告警怎么送达、系统怎么不出错。">
+  <meta name="description" content="亿级报文从边缘采集到时序存储的架构设计与工程落地。二十一篇分三段：数据怎么流、告警怎么送达、系统怎么不出错。">
   <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
   <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
@@ -40,7 +40,7 @@
       <div class="article-list">
 
         <div class="intro">
-          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>与<strong>告警送达</strong>的完整链路。十九篇分三段：<strong>第一段跟一条数据走</strong>，从边缘一直走到存储；<strong>第二段跟一个告警走</strong>，从判定一直走到用户的手机；<strong>第三段横向收束</strong>，讲并发模型、端到端一致性、容量标定，以及一个容易被忽略的问题——故障为什么常常是静默的。</p>
+          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>与<strong>告警送达</strong>的完整链路。二十一篇分三段：<strong>第一段跟一条数据走</strong>，从边缘一直走到存储；<strong>第二段跟一个告警走</strong>，从判定一直走到用户的手机；<strong>第三段横向收束</strong>，讲并发模型、端到端一致性、容量标定，以及一个容易被忽略的问题——故障为什么常常是静默的。</p>
           <ul>
             <li>场景：四遥构成与量级传导</li>
             <li>边缘：上送策略与可靠性</li>
@@ -172,22 +172,36 @@
           <p class="highlight">👉 核心观点：高并发的第一步是数清「必须串行的地方」</p>
         </div>
 
-        <div class="article-item disabled">
-          <h3><a>第 17 篇：端到端一致性——没有事务，怎么保证最终一致</a></h3>
+                <div class="article-item">
+          <h3><a href="17-performance.html">第 17 篇：性能优化——这个场景的「高并发」是哪一种</a></h3>
+          <div class="meta">2026-11 · 已发布</div>
+          <p class="desc">高并发写与高 QPS 的差别；六种通用策略与各自的代价；九条「试过但没用」的证伪清单及其三个原因；一类特殊的优化——消除错误默认值；一个完整的优化序列。</p>
+          <p class="highlight">👉 核心观点：最难的不是知道有哪些手段，而是知道哪些对当前的你没用</p>
+        </div>
+
+<div class="article-item disabled">
+          <h3><a>第 18 篇：端到端一致性——没有事务，怎么保证最终一致</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">横向收束，不复述机制：一张一致性总表（每处保证什么 / 放弃什么 / 怎么观测）、三个可复用模式（本地事实表＋追认、幂等键的选择依据、对账兜底）、一份诚实清单；以及如果强求强一致，要付出什么代价。</p>
           <p class="highlight">👉 核心观点：没有分布式事务，一致性靠「每一步都幂等 + 每一步可重放」</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 18 篇：容量与压测——怎么标定每一层的上限</a></h3>
+          <h3><a>第 19 篇：容量与压测——怎么标定每一层的上限</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">旁路压测、自证探针、阶梯法；以及为什么「提升 48 倍」上线只兑现 3.4 倍。</p>
           <p class="highlight">👉 核心观点：打掉一个瓶颈，得到的是下一个瓶颈</p>
         </div>
 
-        <div class="article-item disabled">
-          <h3><a>第 19 篇：静默失败——故障为什么看不见，怎么让它可见</a></h3>
+                <div class="article-item disabled">
+          <h3><a>第 20 篇：部署形态——这个量级最终落地成什么</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">全链路部署清单；逐组件的压力、瓶颈与规格依据；从容量到实例数的三步推导；拓扑形态的三个档；资源配比经验；这套部署的运维要点。</p>
+          <p class="highlight">👉 核心观点：前面所有设计，最后要落成一张能交付的规格表</p>
+        </div>
+
+<div class="article-item disabled">
+          <h3><a>第 20 篇：静默失败——故障为什么看不见，怎么让它可见</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">进程健康、接口 200、账本已完成，数据却是错的：静默失败的几种典型形态，以及每一层该对什么账。</p>
           <p class="highlight">👉 核心观点：让系统知道自己坏了，比让它不坏更难</p>
