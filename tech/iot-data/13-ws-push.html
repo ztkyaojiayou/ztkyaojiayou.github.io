@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebSocket 推送：谁该订、订了之后怎么送达 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="在线推送要解决的不是「快」，而是「全」。订阅粒度、重连后的重新对齐、多副本下的广播范围——三个洞堵不齐，「在线」就只是看起来在线。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>WebSocket 推送——谁该订、订了之后怎么送达</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 13 篇</div>
+
+    <div class="takeaway">
+      <p>在线推送要解决的不是「快」——WebSocket 本来就快。它要解决的是<strong>「全」</strong>：这个人看到的，是不是他真的应该看到的全部。</p>
+      <p>「订阅成功」和「他真的看全了」之间有三道缝：<strong>订阅粒度、重连后的重新对齐、多副本下的广播范围</strong>。三处堵不齐，「在线」就只是看起来在线。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
+
+    <h2>一、在线推送要解决的不是「快」，而是「全」</h2>
+
+    <p>值班室里有一块大屏，运维盯着它看告警。这块屏的数据从哪来？轮询接口也能做，但延迟和开销都不划算，所以用 WebSocket 长连接推。</p>
+
+    <p>大部分关于 WebSocket 的讨论都停在"怎么建立连接、怎么发消息"。但真做过告警推送就会发现，连接本身不是难点——<strong>难点是让人相信他看到的确实是全部</strong>。</p>
+
+    <p>因为推送这种东西有一个很坏的失败模式：<strong>它不会告诉你少了一条</strong>。页面正常刷新、大屏正常滚动、连接状态显示"已连接"——但某几条告警从来没有到达过。</p>
+
+    <p>后面几节讲的都是同一件事：怎么把"少了一条"这种情况，从"不可能被发现"变成"设计上不会发生"。</p>
+
+    <h2>二、三级 destination：按什么粒度广播</h2>
+
+    <p>第一道缝就是粒度。一条告警要被推到哪些人面前，取决于他"关心哪一片"。我们的做法是把订阅空间切成三级：</p>
+
+    <table>
+      <thead>
+        <tr><th>级别</th><th>destination</th><th>订阅方</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>全量</strong></td><td>全站告警</td><td>监控中心、值班大屏</td></tr>
+        <tr><td><strong>场站</strong></td><td>按场站划分</td><td>场站运维、区域负责人</td></tr>
+        <tr><td><strong>设备</strong></td><td>按设备划分</td><td>正在排查某台设备的工程师</td></tr>
+      </tbody>
+    </table>
+
+    <p>为什么不做"按用户"的 topic？我们评估过：如果每个用户一个 destination，那 topic 数量大致等于用户数（千级），而其中绝大多数长期没有订阅者——连接可能是断的、人可能在休假。同时，一个人开多个端（电脑 + 手机 + 大屏）时，按用户的 topic 还得再退化成"按连接"来投递，等于绕了一圈又回到会话维度。</p>
+
+    <p>所以维度定在<strong>数据</strong>上（全量/场站/设备），而不是<strong>人</strong>上。人关心哪一片，就去订那一片——这一层映射放在订阅关系里，不放进 destination 命名。</p>
+
+    <h2>三、「该订什么」必须由服务端回答</h2>
+
+    <p>维度定完了，下一个问题是：<strong>谁来决定这个人该订哪几个 destination？</strong></p>
+
+    <p>很自然的做法是前端自己算：我知道我是哪个场站的、我关心哪些设备，那我拼出几个 topic 去订阅就行了。这个做法有两个后果，第二个很严重：</p>
+
+    <ul>
+      <li><strong>算错就是漏看</strong>：前端的权限认知与后端不同步，少订了一个场站，他永远收不到那个场站的告警，而页面一切正常。</li>
+      <li><strong>越权</strong>：前端可以订任意 destination——它凭什么不能订别人的场站？如果服务端在 SUBSCRIBE 时不做 scope 校验，这就是一条越权通道。</li>
+    </ul>
+
+    <p>所以正确做法是两条一起：</p>
+
+    <ol>
+      <li><strong>提供一个接口，由服务端回答"你该订什么"</strong>——这个接口和普通查询接口共用<strong>同一套鉴权判定</strong>，前端不自己算；</li>
+      <li><strong>SUBSCRIBE 时服务端再按 scope 校验一次</strong>——不能因为"这个 topic 是列表里给的"就免检，因为客户端完全可以不按列表来。</li>
+    </ol>
+
+    <p>这两条的关系是"两道门"：接口负责<strong>告诉</strong>你该订什么，校验负责<strong>拦住</strong>你不该订的。只做前者，越权通道还在；只做后者，前端会因为算错而漏看。</p>
+
+    <p>还有一个工程细节：这个"该订什么"的接口会被每一次连接调用，量不小，所以结果通常要缓存。但缓存又会引入一致性窗口——管理员刚把某个场站划给某人，他重连时可能还拿到旧列表。<strong>所以缓存 TTL 要短，且订阅被拒的指标要能区分"真越权"和"列表过期"</strong>：前者该报警，后者只是一次正常的新旧交替。</p>
+
+    <p>这里还有一个很好用的运维指标：<strong>订阅被拒的计数</strong>。它正常应该接近零。一旦持续非零，通常只有两种可能——要么真有客户端在越权，要么前端又在自己拼 topic 了。<strong>这个指标的价值在于，它把"设计上不允许的事正在发生"变成了一个可以被看见的数字。</strong></p>
+
+    <h2>四、先订阅、再拉快照</h2>
+
+    <p>订阅成功之后，客户端还要做一件事：拉一次当前告警的快照，把页面填满。</p>
+
+    <p>这两步的顺序不能反：</p>
+
+    <table>
+      <thead>
+        <tr><th>顺序</th><th>会漏什么</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>先拉快照、后订阅</strong></td>
+          <td>两步之间产生的告警：快照里没有（还没发生），推送也收不到（还没订阅）——<strong>永久漏掉</strong></td>
+        </tr>
+        <tr>
+          <td><strong>先订阅、后拉快照</strong></td>
+          <td>两步之间产生的告警会同时出现在推送和快照里 ⇒ <strong>重复</strong>，但重复是可见的、可以按告警 id 去重</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>这个取舍和很多地方是同一条原则：<strong>在"可能重复"和"可能丢"之间，选那个能被发现并可修复的。</strong>重复的告警在页面上会出现两次，用户立刻能看出来；漏掉的告警永远不会有人知道。</p>
+
+    <p>顺序定下来之后，还有一件配套的事：<strong>快照要带一个时间点</strong>，前端据此知道"我这一屏是截止到哪一刻的"。没有这个时间点，重复去重就只能靠猜。</p>
+
+    <h2>五、断开与重连：每次重连都是一次冷启动</h2>
+
+    <p>上一节的流程如果只在"首次连接"时执行，那它只对了一半。因为 <strong>WebSocket 的连接会断</strong>，而断了之后，服务端那边的订阅关系也随之消失。</p>
+
+    <p>所以准确的说法是：「先订阅、再拉快照」不是初始化流程，<strong>而是每一次（重）连接的固定流程</strong>。忽略这一点的后果是：第一次连上一切正常，某次网络抖动之后连接恢复了、页面显示"已连接"，但订阅没重建——<strong>他从此一条也收不到，而界面全绿</strong>。</p>
+
+    <p>除了重新订阅，还有五件事绕不过去：</p>
+
+    <table>
+      <thead>
+        <tr><th>问题</th><th>为什么绕不过去</th><th>对策</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>订阅不在服务端持久</strong></td>
+          <td>订阅绑在连接上，连接没了订阅就没了</td>
+          <td>把"重连后重建订阅"写进客户端状态机，不靠人记</td>
+        </tr>
+        <tr>
+          <td><strong>断连期间的空洞</strong></td>
+          <td>WS 没有"位点"概念，断线期间的消息不会替你留着</td>
+          <td>重连后必须重新拉快照——这正是"每次都是冷启动"的含义</td>
+        </tr>
+        <tr>
+          <td><strong>保活是被动的</strong></td>
+          <td>网关/反代通常有空闲超时（分钟级），而告警是稀疏的；长时间没消息的连接会被中间层判死，而客户端并不立刻知道</td>
+          <td>两端都要有心跳；客户端还要能识别"连接假活"（发心跳无回）</td>
+        </tr>
+        <tr>
+          <td><strong>重连风暴</strong></td>
+          <td>服务端重启或网络抖动后，所有客户端同时重连，鉴权与订阅请求瞬间打满</td>
+          <td>客户端退避 + 随机抖动；服务端限速</td>
+        </tr>
+        <tr>
+          <td><strong>凭证会过期</strong></td>
+          <td>长连接存活时间可能超过 token 有效期</td>
+          <td>重连时用新凭证；订阅被拒要能区分"越权"和"凭证过期"</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>这五条里最阴的是第 4 条与第 5 条的组合：连接被中间层掐掉、客户端不知道、重连时用的还是过期凭证——最终表现是"在线但静默"。而这几件事单独看都会被认为是"正常的网络问题"。</p>
+
+    <p>所以客户端不能只有"连上/断开"两个状态，至少要有一个显式的状态机：<strong>连接中 → 已连接 → 订阅中 → 就绪（已拉快照）</strong>。只有到达"就绪"之前，页面都不该显示"实时"，而应该显示"正在同步"。这个界面上的小细节，恰恰是防止"用户以为自己在看实时"的最后一道防线。</p>
+
+    <h2>六、多副本下的广播范围是正确性问题</h2>
+
+    <p>前面五节都是单实例视角。一旦推送服务上了多副本，会出现一个更隐蔽的问题。</p>
+
+    <p>先看一个事实：大多数轻量级 WS 实现（包括框架自带的简单 broker）是<strong>进程内</strong>的——它只知道本进程里有哪些连接。而消费告警消息的实例，是按分区分配到的——每个实例只消费一部分分区。</p>
+
+    <p>两者一叠加，问题就来了：</p>
+
+    <figure>
+      <svg viewBox="0 0 880 300" role="img" aria-label="多副本下推送静默丢失">
+        <defs>
+          <marker id="a13" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#9aa4b2"/>
+          </marker>
+        </defs>
+
+        <text x="16" y="24" font-size="13" fill="#2c3e50">消息队列（假设 4 个分区）</text>
+        <rect x="16" y="36" width="60" height="34" rx="4" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="46" y="58" text-anchor="middle" font-size="11" fill="#2c3e50">P0</text>
+        <rect x="82" y="36" width="60" height="34" rx="4" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="112" y="58" text-anchor="middle" font-size="11" fill="#2c3e50">P1</text>
+        <rect x="148" y="36" width="60" height="34" rx="4" fill="#dff0e4" stroke="#3f9a63"/>
+        <text x="178" y="58" text-anchor="middle" font-size="11" fill="#2c3e50">P2</text>
+        <rect x="214" y="36" width="60" height="34" rx="4" fill="#dff0e4" stroke="#3f9a63"/>
+        <text x="244" y="58" text-anchor="middle" font-size="11" fill="#2c3e50">P3</text>
+
+        <path d="M76,70 L76,96" stroke="#9aa4b2" stroke-width="1.5"/>
+        <path d="M46,96 L46,120" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a13)"/>
+        <path d="M112,96 L112,120" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a13)"/>
+        <path d="M178,96 L178,120" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a13)"/>
+        <path d="M244,70 L244,120" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#a13)"/>
+
+        <!-- pod A -->
+        <rect x="16" y="126" width="130" height="70" rx="8" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="81" y="152" text-anchor="middle" font-size="13" fill="#2c3e50">Pod A</text>
+        <text x="81" y="172" text-anchor="middle" font-size="11" fill="#7f8c8d">消费 P0 · P1</text>
+        <text x="81" y="188" text-anchor="middle" font-size="11" fill="#7f8c8d">进程内 broker</text>
+
+        <!-- pod B -->
+        <rect x="160" y="126" width="130" height="70" rx="8" fill="#eef7f1" stroke="#3f9a63"/>
+        <text x="225" y="152" text-anchor="middle" font-size="13" fill="#2c3e50">Pod B</text>
+        <text x="225" y="172" text-anchor="middle" font-size="11" fill="#3f9a63">消费 P2 · P3</text>
+        <text x="225" y="188" text-anchor="middle" font-size="11" fill="#3f9a63">进程内 broker</text>
+
+        <!-- 客户端连在 A -->
+        <rect x="16" y="228" width="130" height="50" rx="8" fill="#fff" stroke="#667eea"/>
+        <text x="81" y="252" text-anchor="middle" font-size="12" fill="#2c3e50">客户端（连着 A）</text>
+        <text x="81" y="268" text-anchor="middle" font-size="11" fill="#667eea">订了场站 X</text>
+        <path d="M81,228 L81,200" stroke="#667eea" stroke-width="1.5" marker-end="url(#a13)"/>
+
+        <text x="320" y="150" font-size="12" fill="#b06a6a">场站 X 的消息落在 P2（Pod B 消费）</text>
+        <text x="320" y="170" font-size="12" fill="#b06a6a">→ A 的进程内 broker 从未收到它</text>
+        <text x="320" y="190" font-size="12" fill="#b06a6a">→ 客户端永远收不到，且无任何报错</text>
+
+        <text x="16" y="298" font-size="11" fill="#8c8c8c">这不是负载问题，是「广播范围」问题——加机器只会让漏得更均匀。</text>
+      </svg>
+      <figcaption>连接在 A、消息在 B：进程内 broker 广播不到那个连接</figcaption>
+    </figure>
+
+    <p>关键在于：<strong>这不需要任何故障就会发生</strong>。进程健康、连接正常、消费正常——只是消息进了另一台机器。它是一种<strong>静默、永久</strong>的丢失。</p>
+
+    <p>要把它和另一类问题区分开：</p>
+
+    <table>
+      <thead>
+        <tr><th></th><th>pod 挂了导致连接断</th><th>广播范围不够</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>可见性</strong></td><td>连接断开，客户端立刻知道</td><td><strong>无感知</strong></td></tr>
+        <tr><td><strong>恢复</strong></td><td>重连即恢复</td><td><strong>永久丢失</strong>，重连也没用</td></tr>
+        <tr><td><strong>性质</strong></td><td>良性、可见的可用性问题</td><td><strong>正确性问题</strong></td></tr>
+      </tbody>
+    </table>
+
+    <p>所以"要不要上多副本"这个问题的答案不是"看负载够不够"，而是"<strong>先把广播补全，才敢上多副本</strong>"。</p>
+
+    <h2>七、中继：把广播范围补全</h2>
+
+    <p>问题的本质一句话：<strong>路由表（哪个连接在哪台机器上）是每台机器私有的</strong>。所以补全的思路也很直接——每台机器把"我要推的消息"广播给所有机器，各机器只推自己手里那部分连接。</p>
+
+    <p>实现上我们用的是 Redis 的 pub/sub 做中继：消费到告警的实例把消息发到频道，所有实例订阅该频道，各自推给本地连接。</p>
+
+    <p>这里有个常见担心：<strong>每台都收到全量再推，会不会重复？</strong>不会。因为「连接 → 机器」是一个<strong>排他划分</strong>：每个连接只属于一台机器，所以每条消息对每个连接只会被推一次。前提是每台机器只推自己持有的会话——如果实现时用了集群级的会话表却不做归属判断，才会重复。</p>
+
+    <p>另一个被问过的问题：为什么不直接用消息中间件厂商提供的那种"broker 转发"？这里有个容易误解的点——<strong>那类 relay 不是把已有连接转交给 broker</strong>，它改变的是消息的投递路径，而不是连接的归属。理解了这一点，才能判断它是否适合你的场景。</p>
+
+    <p>我们最后选了自建 Redis 中继，理由是它足够简单、且能把"广播范围"这件事讲清楚：所有实例都在同一个频道上，不存在"某台机器漏订"的可能。</p>
+
+    <p>它的代价也要写清楚：<strong>每条消息会被复制到每一台机器</strong>，所以中继的流量与副本数成正比。副本数上去之后，Redis 的出方向带宽会先成为瓶颈。这也是为什么第八节的顺序很重要——先把单机并发吃满，再考虑加副本，否则你花了中继的开销，却只换来一点容量。</p>
+
+    <p>还有一个容易忽略的取舍：<strong>中继通道不需要持久化</strong>。如果某台机器在中继消息的那一瞬间挂了，它手上的连接本来也已经断了——客户端重连后走"重新订阅 + 拉快照"，能自己补回来。给中继加持久化，收益接近于零，复杂度却上一个台阶。</p>
+
+    <h2>八、扩容靠并发，不是加 pod</h2>
+
+    <p>还有一个反直觉的结论：<strong>推送服务的容量，先靠调并发，而不是加副本。</strong></p>
+
+    <p>原因在第六节那张图里——同一进程内的多个消费线程，<strong>共享同一个进程内 broker</strong>。所以单台机器调高消费并发，就能吃满更多分区，同时 ws 推送仍然是完整的。而加副本，在没有中继之前只会让"漏得均匀"。</p>
+
+    <p>那什么时候必须加副本？答案是<strong>要高可用的时候</strong>：单台机器挂了，上面的连接全断，这本身是可接受的（客户端重连）——但如果只有一台，重连也没地方去。所以第二台的意义主要是"挂了有人接"，而不是"扛更多量"。</p>
+
+    <p>这个判断顺序值得记住：<strong>先问"加机器会不会引入新的正确性问题"，再问"它能带来多少容量"</strong>。顺序反了，就会在还没补全广播的时候先扩出去，然后收获一堆"偶发丢告警"。</p>
+
+    <h2>九、扇出：一条告警要推给多少人</h2>
+
+    <p>前面讲的是"怎么推对"，还有一个"推得动吗"的问题，而它常常被低估。</p>
+
+    <p>一条告警的投递成本，约等于<strong>订阅了它所属 destination 的连接数</strong>。这事在订阅很少时毫无感觉，一旦"全量"这一级被广泛订阅，成本会以另一种方式爆炸：</p>
+
+    <blockquote>
+      假设有一千个在线连接都订了"全量"，<br>
+      那么每产生一条全站级告警，服务端就要写一千次。
+    </blockquote>
+
+    <p>而告警是成串来的——一次区域故障可能在一分钟内产生上百条。一千个连接 × 上百条，就是十万级的一次写放大。<strong>这时候瓶颈不在连接数，也不在消费吞吐，而在扇出。</strong></p>
+
+    <p>所以第二节那个三级划分，价值不只在"权限"和"视图"，它同时是<strong>扇出控制</strong>：</p>
+
+    <table>
+      <thead>
+        <tr><th>级别</th><th>该给谁</th><th>扇出代价</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>全量</strong></td><td>只有必须看全的角色（监控中心、值班大屏）</td><td>最高，要严格授权</td></tr>
+        <tr><td><strong>场站</strong></td><td>该场站的运维与负责人</td><td>与场站规模成正比</td></tr>
+        <tr><td><strong>设备</strong></td><td>正在排查这台设备的人</td><td>最低</td></tr>
+      </tbody>
+    </table>
+
+    <p>配套还有一条纪律：<strong>视图筛选放在客户端本地，不要变成一个更细的订阅</strong>。如果每个人都按"我屏幕上想显示什么"去订一个更窄的 destination，那 destination 会退化成按人划分，第二节否掉的那条路又绕回来了。</p>
+
+    <p>这个思路和上一篇「宁可少发」是同一条原则的两面：<strong>减少到达，既是降噪，也是降本。</strong></p>
+
+    <h2>十、边界：什么时候不必用推送</h2>
+
+    <ul>
+      <li><strong>并发观看的人很少</strong>。只有一两个值班人员、刷新频率也不高，轮询更简单——它没有连接状态、没有重连流程、没有多副本广播问题。</li>
+      <li><strong>对延迟不敏感</strong>。分钟级刷新就够的场景，推送带来的复杂度换不到收益。</li>
+      <li><strong>只需要"有多少条"</strong>。如果页面只展示计数或汇总，一次接口查询比维持长连接划算得多。</li>
+      <li><strong>没有多副本</strong>。单实例时第六节的问题不存在——但要明确写下这个前提，因为它通常会在扩容那天失效。</li>
+    </ul>
+
+    <h2>下一篇</h2>
+
+    <p>在线推送只覆盖"人正看着屏幕"的那部分。更多时候，告警发生在他不在电脑前——这时就得靠站外渠道。下一篇讲投递：地址从哪来、多个渠道怎么隔离、发失败怎么处理，以及一个反直觉的结论：<strong>在第三方网关没有幂等键的前提下，「宁可少发」是唯一安全的选择</strong>。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
