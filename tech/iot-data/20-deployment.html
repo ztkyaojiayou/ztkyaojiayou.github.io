@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>部署形态：这个量级最终落地成什么 - IoT 高并发实时数据链路</title>
+  <meta name="description" content="规格要跟着瓶颈走，不跟着规范走。这条链上「统一 4 核 8G」既浪费又危险——因为它会杀死「为什么是这个数」这个问题。">
+  <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
+  <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
+  <link rel="stylesheet" href="../../styles/blog-style.css?v=20261126">
+</head>
+<body>
+
+  <!-- ===== 导航栏 ===== -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <div class="nav-logo"><a href="../../index.html">邹同琨</a></div>
+      <ul class="nav-menu">
+        <li><a href="../../index.html#about">关于我</a></li>
+        <li><a href="../../index.html#skills">技术能力</a></li>
+        <li><a href="../../index.html#works">成功案例</a></li>
+        <li><a href="../../index.html#blog">技术文章</a></li>
+        <li><a href="../../index.html#contact">联系咨询</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <article class="post-body">
+
+    <h1>部署形态——这个量级最终落地成什么</h1>
+    <div class="post-meta">IoT 高并发实时数据链路 · 第 20 篇</div>
+
+    <div class="takeaway">
+      <p>规格要跟着<strong>瓶颈</strong>走，不跟着<strong>规范</strong>走。这条链上"统一 4 核 8G"这种看起来最稳妥的做法，一半在浪费，一半在埋雷。</p>
+      <p>实例数也一样：性能算出来的数是<strong>"刚好不死"</strong>，投产需要的是<strong>"死一台也不死"</strong>——这两者之间差的那部分，算式里没有。</p>
+    </div>
+
+    <p><em>说明：本文涉及的系统与规模做过脱敏处理，数字用于说明方法与量级关系，不一一对应某个具体项目。</em></p>
+
+    <h2>一、这一篇要交付什么</h2>
+
+    <p>前面十九篇讲的都是设计。这一篇把它们收成一张表——<strong>每个组件几个实例、什么规格、以什么形态部署</strong>。</p>
+
+    <p>而这张表有一个验收标准：<strong>表上每一个数都能回答"为什么是它"</strong>。</p>
+
+    <p>这个标准听着简单，但它能筛掉绝大多数部署文档。因为常见的规格表长这样：某个服务 4 核 8G，为什么？因为大家都这么写。而一旦追问下去，你会发现那个服务其实只吃 1 核，多给的 3 核从来没被用过；另一个服务明明是内存瓶颈，却因为"统一规格"只给了 4G。</p>
+
+    <p>所以这一篇按三块写：<strong>规格</strong>（跟着瓶颈走）、<strong>实例数</strong>（性能和余量是两件事）、<strong>中间件</strong>（它有一套自己的规矩）。</p>
+
+    <h2>二、规格跟着瓶颈走，不跟着规范走</h2>
+
+    <p>这条链上十来个组件的规格，看起来五花八门，其实只归成两档：</p>
+
+    <table>
+      <thead>
+        <tr><th>档</th><th>规格</th><th>特征</th><th>典型组件</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>线程受限档</strong></td>
+          <td>2 核 / 2～3G</td>
+          <td>瓶颈是单线程或外部往返，<strong>加核买不到东西</strong></td>
+          <td>历史写入、接入前置、告警业务</td>
+        </tr>
+        <tr>
+          <td><strong>内存受限档</strong></td>
+          <td>4 核 / 4～8G</td>
+          <td>瓶颈是内存占用或 CPU 并行度有真实需求</td>
+          <td>实时快照、指标派生</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>分档的依据不是"服务重要性"，也不是"团队习惯"，而是<strong>它卡在哪</strong>。下面五个组件的规格，每一行都能指向一个具体位置：</p>
+
+    <table>
+      <thead>
+        <tr><th>组件</th><th>规格</th><th>为什么是这个数</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>历史写入</strong></td>
+          <td>2 核 / 2G</td>
+          <td>瓶颈是两条单线程（一条读、一条写）。实测整机只吃 <strong>1.4/16 核</strong>，给到 8 核也是那 1.4 核在干活</td>
+        </tr>
+        <tr>
+          <td><strong>实时快照</strong></td>
+          <td>4 核 / 4G</td>
+          <td>实测能吃满约 4 核；而<strong>内存才是硬约束</strong>——约 0.7MB/设备，4G 堆大约容纳 4,000 台</td>
+        </tr>
+        <tr>
+          <td><strong>告警判定</strong></td>
+          <td>4 核 / 2G</td>
+          <td>满负载吃约 3.3 核（8 个消费线程 + 3 个 GC 线程）。但它真正的旋钮是<strong>并发数</strong>，不是核数</td>
+        </tr>
+        <tr>
+          <td><strong>接入前置</strong></td>
+          <td>2 核 / 3G</td>
+          <td>客户端回调是单线程的。实测 8,000 条/s 只吃 <strong>1.5 核</strong>，给 4 核不会更快；反而必须把线程数视图钉死</td>
+        </tr>
+        <tr>
+          <td><strong>告警业务</strong></td>
+          <td>2 核 / 2G</td>
+          <td>只吃 <strong>1.05 核</strong>，瓶颈是每个事件二到三次数据库往返——加核加的是闲置的核</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>这张表里最值得注意的不是数字，而是<strong>有三行写着同一个结论：加核没用</strong>。这在通用后端里很少见——大部分服务确实可以靠加核提速，所以"多给点核"是一种安全的选择。但在这条链上，多给的核只是让账单变长。</p>
+
+    <h3>为什么"统一规格"是个陷阱</h3>
+
+    <p>统一到 4 核 8G 有两个坏处，第二个比第一个严重得多。</p>
+
+    <p><strong>第一个是浪费。</strong>对只吃 1.4 核的服务，多给的 2.6 核永远闲着；对只需要 2G 堆的服务，8G 堆意味着更长的回收停顿时长。装箱率被拉低，成本是实打实的。</p>
+
+    <p><strong>第二个是它会杀死"为什么"这个问题。</strong>当所有服务长得一样，就没人再问"它的瓶颈在哪"。而这条链上真正的杠杆，恰恰藏在这些问题里——一个并发参数没配，同一份代码差 <strong>3.6 倍</strong>；线程数视图没钉，容器里按宿主机核数开线程；堆没显式指定，行为随环境漂移。<strong>规格统一之后，这些全都没人看了</strong>，因为看起来"配置是一样的"。</p>
+
+    <blockquote>
+      一张规格表的价值，不在数字，在于每个数字背后那个"因为"。
+    </blockquote>
+
+    <p>还有一个连带的坑：<strong>规格要和线程数一起定</strong>。告警判定给 4 核，是因为它要跑 8 个消费线程加 3 个 GC 线程；如果你给它 4 核却只配了 1 个消费线程，那 4 核就是浪费——实测并发 1 与并发 8，吞吐差 3.6 倍。核数与并发量是两个必须一起对上的数，只调其中一个，另一个就成了摆设。</p>
+
+    <h2>三、实例数：算出来的，和留出来的</h2>
+
+    <p>实例数怎么算，上一篇已经讲过（基数取哪一档、为什么乘 40%、三条约束取最严）。这里只说<strong>算完之后</strong>的事。</p>
+
+    <p>因为算出来的那个数，投不了产。</p>
+
+    <h3>两档并存</h3>
+
+    <p>我们的部署清单里，每一层都有两个数：</p>
+
+    <table>
+      <thead>
+        <tr><th>组件</th><th>算式值</th><th>采用值</th><th>差额来自</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>历史写入</td><td>7.5</td><td><strong>8</strong></td><td>向上取整</td></tr>
+        <tr><td>实时快照</td><td>6 ～ 10</td><td><strong>10</strong></td><td>取最严约束（限核后延迟尺）</td></tr>
+        <tr><td>告警判定</td><td>3.75</td><td><strong>4</strong></td><td>向上取整</td></tr>
+        <tr><td>告警业务</td><td>5</td><td><strong>5</strong></td><td>—</td></tr>
+        <tr><td>接入前置</td><td>4.05</td><td><strong>5</strong>（保守 6）</td><td>向上取整 + 冗余</td></tr>
+      </tbody>
+    </table>
+
+    <p>而在这个基础上，还有一个<strong>保守档</strong>：在算式值上再多开 6 到 8 个实例，分散到几层上去。这不是"不信任算式"，而是<strong>算式只算了一件事</strong>。</p>
+
+    <h3>算式没算的三件事</h3>
+
+    <p><strong>第一，故障域。</strong>算式假设所有实例都在工作。可实际上总有一台在重启、在发布、在 OOM 边缘。如果 8 个实例刚好够用，那挂掉一台就意味着剩下的 7 个要接住它那一份——按 100% 利用率算的系统，<strong>挂一台就过载</strong>。所以 N+1 不是"多买一台机器"，而是"每一份负载都有一份备份"。</p>
+
+    <p><strong>第二，滚动发布。</strong>发布时新旧实例交替，可用数量会临时下降。而这条链上，<strong>告警不会因为你正在发布就暂停</strong>——恰恰相反，发布期间是最需要稳定的时候。如果算到刚好，那每一次发布都是一个短暂的容量事故窗口。</p>
+
+    <p><strong>第三，下游抖动。</strong>数据库慢 10%、时序库在做压缩、消息层在补副本——这些都是常态。有余量的那一层能用积压吸收掉；算到刚好的一层会直接把抖动放大成延迟。</p>
+
+    <blockquote>
+      性能算出来的数，是"刚好不死"；<br>
+      投产需要的数，是"死一台也不死"。
+    </blockquote>
+
+    <p>这两者之间的差额，就是余量。它没有公式，只能靠<strong>把风险一项一项列出来，再决定给多少</strong>。这也是为什么我们写的是"再开 6 到 8 个"，而不是一个精确的小数——余量本来就是一笔预算，不是一次计算。</p>
+
+    <h3>余量不该平均分配</h3>
+
+    <p>这 6 到 8 个实例往哪儿加，也有一条判据：<strong>加在过载代价最大的那一层</strong>。</p>
+
+    <p>实时快照和告警判定的过载代价最陡——前者延迟从 436 毫秒直接跳到 38 秒，后者跟不上就是漏告警。这两层该多给。</p>
+
+    <p>历史写入反而可以少给。因为它过载时的坏法是"丢最旧"，而这个坏法<strong>有计数、可对账、可补</strong>：丢了会留下痕迹，事后能查出来是哪一段。换句话说，它的过载是"损失型"的，而不是"事故型"的。</p>
+
+    <blockquote>
+      余量要买的是「不出事故」，不是「不出损失」。<br>
+      分不清这两者，余量就会平均撒在最不缺的地方。
+    </blockquote>
+
+    <h2>四、中间件：它有一个业务服务没有的概念</h2>
+
+    <p>业务服务可以随意加减、无状态、挂了重启就行。中间件不行——<strong>它有一个"最小可运维规模"</strong>：低于这个规模，副本数、仲裁、配额这些机制就建立不起来。</p>
+
+    <table>
+      <thead>
+        <tr><th>中间件</th><th>形态</th><th>这个形态的依据</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>消息层</strong></td>
+          <td>3 节点 / 2 副本</td>
+          <td>3 台是"2 副本能安稳运行"的最小可运维规模；内存给<strong>页缓存</strong>而非堆，配本地 NVMe 与万兆</td>
+        </tr>
+        <tr>
+          <td><strong>缓存</strong></td>
+          <td>1 主 2 从 + 3 哨兵，每节点 4～8G</td>
+          <td>数据本身不到 1GiB，多给的余量是给持久化时的内存复制；扩成集群的阈值是<strong>写 QPS 8 万</strong></td>
+        </tr>
+        <tr>
+          <td><strong>时序库</strong></td>
+          <td>3 配置节点 + 3 数据节点，2 副本</td>
+          <td>规格不能用"点/s"推，得按<strong>元数据</strong>推：约 3.1KB/序列 × 170 万序列 ≈ 5.3GB</td>
+        </tr>
+        <tr>
+          <td><strong>关系库</strong></td>
+          <td>1 主 1 从，8 核 16G</td>
+          <td>它不承担高频写，承担的是"状态与事务"；单表稳态千级 TPS</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>表格里有几个值得单独说的点。</p>
+
+    <p><strong>消息层的 3 台不是吞吐推出来的，是可用性推出来的。</strong>单 broker 的吞吐我们测过，但那只是实验室数字——真实集群要能容忍一台挂掉之后副本数还成立。所以 3 台是个下限，不是个优选。</p>
+
+    <p><strong>它的内存用途和业务服务完全不同。</strong>业务服务给的是堆，消息层给的是<strong>操作系统页缓存</strong>。这意味着你不能按"堆大小"去理解它的规格：同一台机器上，页缓存被别的进程抢走，它的写性能立刻下降——这也是第七节为什么要求中间件独占节点。</p>
+
+    <p><strong>时序库的规格是这条链上唯一按"序列数"定的。</strong>每一条时间序列在内存里有固定的元数据开销，约 3.1KB；170 万条设备测点铺开就是 5.3GB。堆不够时的表现不是变慢，是<strong>拒绝建新序列</strong>——而"拒绝建序列"意味着新设备的数据根本进不来。<strong>这条墙和每秒点数完全无关</strong>，你把写入量砍一半也不解决问题。</p>
+
+    <h3>中间件不能按业务峰值降档</h3>
+
+    <p>这一点和业务服务相反，值得记住。</p>
+
+    <p>业务服务降档，损失的是性能——慢一点，但系统性质不变。中间件降档，损失的往往是<strong>故障恢复能力</strong>：副本数从 2 降到 1、仲裁从 3 台变 1 台、配额调小。这些变动平时看不出来，<strong>只在出事那天才表现出来</strong>。</p>
+
+    <p>所以中间件的规格推导有两条路径，不能混：<strong>业务服务是"吞吐推规模"，中间件是"可用性推规模，吞吐只用来验证够不够"</strong>。</p>
+
+    <h2>五、拓扑三档：什么时候该跨过去</h2>
+
+    <p>规格和实例数定了，还有一个更前置的问题：这些东西<strong>放在哪</strong>。</p>
+
+    <p>这条链跑起来的方式，实际上只有三档：</p>
+
+    <figure>
+      <svg viewBox="0 0 880 380" role="img" aria-label="三种部署拓扑：单机全栈、业务上平台中间件裸装、全部收敛到平台">
+        <text x="150" y="26" text-anchor="middle" font-size="13" fill="#2c3e50">一档 · 单机全栈</text>
+        <text x="438" y="26" text-anchor="middle" font-size="13" fill="#2c3e50">二档 · 业务上平台，中间件裸装</text>
+        <text x="730" y="26" text-anchor="middle" font-size="13" fill="#2c3e50">三档 · 全部收敛到平台</text>
+
+        <!-- 一档 -->
+        <rect x="24" y="40" width="252" height="252" rx="8" fill="#fbfbfc" stroke="#c9cfd8" stroke-dasharray="5 4"/>
+        <rect x="40" y="58" width="220" height="52" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="150" y="80" text-anchor="middle" font-size="12" fill="#2c3e50">业务服务</text>
+        <text x="150" y="97" text-anchor="middle" font-size="10" fill="#8a9199">同机进程</text>
+
+        <rect x="40" y="118" width="220" height="64" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="150" y="143" text-anchor="middle" font-size="12" fill="#2c3e50">中间件</text>
+        <text x="150" y="161" text-anchor="middle" font-size="10" fill="#8a9199">同机，抢同一份资源</text>
+
+        <rect x="40" y="190" width="220" height="46" rx="6" fill="#f5f6f8" stroke="#d6dae3"/>
+        <text x="150" y="218" text-anchor="middle" font-size="12" fill="#2c3e50">同一块盘 / 同一张网卡</text>
+
+        <text x="150" y="268" text-anchor="middle" font-size="11" fill="#b06a6a">↑ 一个故障域</text>
+        <text x="150" y="314" text-anchor="middle" font-size="11" fill="#8c8c8c">千台设备以内</text>
+
+        <!-- 二档 -->
+        <rect x="300" y="40" width="276" height="252" rx="8" fill="#fbfbfc" stroke="#c9cfd8" stroke-dasharray="5 4"/>
+        <rect x="316" y="56" width="244" height="54" rx="6" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="438" y="78" text-anchor="middle" font-size="12" fill="#2c3e50">编排平台</text>
+        <text x="438" y="96" text-anchor="middle" font-size="10" fill="#667eea">无状态业务服务 · 可随意加减</text>
+
+        <rect x="316" y="122" width="244" height="96" rx="6" fill="#f5f6f8" stroke="#9aa4b2"/>
+        <text x="438" y="148" text-anchor="middle" font-size="12" fill="#2c3e50">裸装中间件</text>
+        <text x="438" y="167" text-anchor="middle" font-size="10" fill="#8a9199">本地盘 · 万兆 · 固定规格</text>
+        <text x="438" y="185" text-anchor="middle" font-size="10" fill="#8a9199">写路径不叠任何虚拟化层</text>
+
+        <text x="438" y="238" text-anchor="middle" font-size="11" fill="#a8802a">两套运维体系</text>
+        <text x="438" y="268" text-anchor="middle" font-size="11" fill="#8c8c8c">—</text>
+        <text x="438" y="314" text-anchor="middle" font-size="11" fill="#8c8c8c">万台级、瓶颈在写与盘</text>
+
+        <!-- 三档 -->
+        <rect x="600" y="40" width="256" height="252" rx="8" fill="#fbfbfc" stroke="#c9cfd8" stroke-dasharray="5 4"/>
+        <rect x="616" y="56" width="224" height="70" rx="6" fill="#f2f4ff" stroke="#667eea"/>
+        <text x="728" y="84" text-anchor="middle" font-size="12" fill="#2c3e50">编排平台：业务服务</text>
+        <text x="728" y="104" text-anchor="middle" font-size="10" fill="#667eea">弹性伸缩的主场</text>
+
+        <rect x="616" y="136" width="224" height="82" rx="6" fill="#fdf5f5" stroke="#d98b8b"/>
+        <text x="728" y="162" text-anchor="middle" font-size="12" fill="#2c3e50">中间件 + 存储</text>
+        <text x="728" y="181" text-anchor="middle" font-size="10" fill="#b06a6a">存储被虚拟化</text>
+        <text x="728" y="199" text-anchor="middle" font-size="10" fill="#b06a6a">测出的写上限不再是硬件上限</text>
+
+        <text x="728" y="238" text-anchor="middle" font-size="11" fill="#8c8c8c">—</text>
+        <text x="728" y="268" text-anchor="middle" font-size="11" fill="#8c8c8c">—</text>
+        <text x="728" y="314" text-anchor="middle" font-size="11" fill="#8c8c8c">多租户、要弹性、无裸装能力</text>
+
+        <line x1="24" y1="334" x2="856" y2="334" stroke="#e3e6ec"/>
+        <text x="24" y="360" font-size="11" fill="#8c8c8c">判据只有一条：瓶颈是否落在「盘」和「网络上」——是，就别把中间件放进容器。</text>
+      </svg>
+      <figcaption>三档不是先进程度的排序，是「规模 × 团队能力」的函数</figcaption>
+    </figure>
+
+    <p>三档各有它的适用条件，而没有哪一档是"更先进"的。</p>
+
+    <p><strong>一档：单机全栈。</strong>一台机器上跑完所有东西。千台设备以内，它是最优解——没有分布式问题、没有网络问题、排查成本极低。代价也很直白：<strong>一个故障域</strong>。磁盘写满、内存不够、某个进程失控，任何一个都会让整条链一起停。</p>
+
+    <p><strong>二档：业务服务上编排平台，中间件裸装。</strong>千台到万台。业务服务无状态，适合编排——加减副本、滚动发布、资源隔离都是现成的；而中间件依赖本地盘和高吞吐网络，裸装让它直接跑在硬件上。</p>
+
+    <p>代价是<strong>两套运维体系</strong>：两套发布流程、两套监控、两套值班手册。这个代价不是技术问题，是人的问题——它通常比想象中贵。</p>
+
+    <p><strong>三档：全部收敛到编排平台，或者直接托管。</strong>适合多租户、需要弹性、或者团队没有能力维护裸装集群的情况。它的代价是存储被虚拟化：文件系统叠一层、配额再限一层，<strong>你测出来的写上限就不再是硬件的上限</strong>。</p>
+
+    <p>对一个写密集的链路来说，这个代价是真金白银——但换来的是"不用自己管集群"。在团队只有三五个人时，这笔交易往往是赚的。</p>
+
+    <h3>跨档的三个信号</h3>
+
+    <p>什么时候该从一档走到二档？不要等"感觉撑不住了"，那通常已经晚了。有三个可观察的信号：</p>
+
+    <ol>
+      <li><strong>发布必须停服。</strong>一档时所有东西在一台机器上，改一个服务就得整体重启——而重启期间全场站的告警是断的。这个信号最先出现，也最常被忍受。</li>
+      <li><strong>单机某一项资源长期过 70%。</strong>不是峰值过 70%，是<strong>常态</strong>过 70%。上到二档之后业务服务可以横向加，中间件可以独享机器，这些都能缓解；留在一档就只能换更大的机器，而垂直扩展是有尽头的。</li>
+      <li><strong>故障域已经不可接受。</strong>一次磁盘写满、一个进程内存泄漏，会让整条链一起停——这个代价一旦被业务方明确表达过（"再停一次我们要走流程"），就说明该跨了。</li>
+    </ol>
+
+    <p>反过来，如果没有这三个信号，跨档就是提前支出。二档带来的两套运维体系，会让每一次改动都变慢——在规模还没到的时候，这个代价远大于收益。</p>
+
+    <h3>一个看起来矛盾的选择</h3>
+
+    <p>我们压测时用的是二档的裸装形态，而生产跑在编排平台上。这看起来矛盾，其实是两件事：</p>
+
+    <ul>
+      <li><strong>压测要接近硬件</strong>——它要回答的是"这块盘的写上限是多少"，任何虚拟化层都会把结论搅浑；</li>
+      <li><strong>生产要接近可运维</strong>——它要回答的是"出了事谁来处理、怎么处理"。</li>
+    </ul>
+
+    <p>所以两边形态不同不是不一致，而是<strong>各自回答不同的问题</strong>。唯一必须做的一件事是：把压测得出的数字，按生产形态的损耗折算过去。不折算，就等于拿实验室的盘速去规划线上的集群。</p>
+
+    <h2>六、七条纪律</h2>
+
+    <p>下面七条，每一条都曾经出过事；它们的共同点是<strong>错了不报错</strong>，所以只能靠规范，不能靠发现。前五条是部署纪律，后两条是配置纪律。</p>
+
+    <ol>
+      <li><strong>堆显式写死，初始值等于最大值。</strong>不写的话，运行时会按容器比例推算一个值，堆会慢慢长——成长期多付一类回收抖动；而且容器配额一变，这个默认值也跟着变，同一个镜像在两台机器上行为不同。</li>
+      <li><strong>资源请求等于上限。</strong>否则节点一紧张，最先被驱逐的就是"没有保底"的那个——而它可能正是告警判定。在告警链路上，这等于让最该稳住的组件最容易被赶走。</li>
+      <li><strong>内存限额 ≥ 堆 + 0.5～1G。</strong>非堆部分（元空间、线程栈、堆外缓冲）没算进去就会被直接杀掉。实测 4G 堆时进程常驻 4,483MB，非堆约 480MB——按 4G 设限额必死。</li>
+      <li><strong>存活探针只判"进程卡死"，绝不接积压。</strong>把传入速率接进存活探针，等于让"消费慢"变成"无限重启"——而消费慢通常不是重启能解决的，重启反而丢掉更多。</li>
+      <li><strong>不按 CPU 做自动扩缩容，按积压。</strong>这条链的串行点不烧 CPU，按 CPU 扩容会在最该扩的时候一动不动。</li>
+      <li><strong>分区数先算后加，只能增不能减。</strong>加分区意味着重排键的映射，改一次要处理已有数据的顺序；减分区在多数消息中间件里根本不支持。</li>
+      <li><strong>并发数必须显式配。</strong>两次实测很能说明问题：漏配一次，同一份代码吞吐差 <strong>3.6 倍</strong>；另一次漏配，让端到端中位数从 <strong>25.5 秒</strong>掉到 <strong>1 毫秒</strong>——第一次是性能问题，第二次是看起来"大幅优化"了的假象。</li>
+    </ol>
+
+    <p>七条里最容易被忽略的是第三条和第七条：它们都不涉及架构，只是几个字符的配置，但代价是"进程被杀"和"差 3.6 倍"。这也说明一件事——<strong>部署这件事的难点不在设计，在把那些"不写就会错"的默认值全部写对</strong>。</p>
+
+    <h2>七、资源总量与装箱</h2>
+
+    <p>把所有规格加起来，这个量级大约是：</p>
+
+    <table>
+      <thead>
+        <tr><th>口径</th><th>CPU</th><th>内存</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>算式档</strong></td><td>约 196 核</td><td>322～370 Gi</td><td>按容量算式算出的下限</td></tr>
+        <tr><td><strong>保守档</strong></td><td>约 220 核</td><td>348～396 Gi</td><td>再叠上故障域与发布余量</td></tr>
+      </tbody>
+    </table>
+
+    <p>核与内存的比例大约是 <strong>1:1.7</strong>，而常见的通用集群配比是 1:2 或 1:4。这个差异来自链路本身的性质：<strong>写密集型，且大量状态在内存里</strong>——内存不会被"用不上"，只会不够。</p>
+
+    <p>装箱有两个坑：</p>
+
+    <ul>
+      <li><strong>大规格 pod 装不进小节点。</strong>按总量买机器经常不够用——总量对得上，但最大那个 pod 塞不进去。节点规格要按"最大的单 pod 加余量"去卡，不能只按总量算。</li>
+      <li><strong>中间件要独占节点。</strong>它依赖页缓存，而页缓存最怕被别的进程挤掉。一个批处理任务的资源峰值，足以让消息层的写性能掉一截——而那个批处理在监控上完全正常。</li>
+    </ul>
+
+    <h2>八、边界：什么时候不用这么细</h2>
+
+    <ul>
+      <li><strong>规模在一档以内。</strong>单机全栈时没有"实例数"和"拓扑"可谈，规格就是机器的规格。</li>
+      <li><strong>全托管。</strong>中间件由云厂商保证，你能做的是验证而不是标定——但验证不能省，尤其是元数据和连接数这两条墙。</li>
+      <li><strong>单租户且不承诺可用性。</strong>挂了重启就行的系统，N+1 和发布余量都可以不要。</li>
+      <li><strong>没有写瓶颈。</strong>如果链路是读多写少，那这套"按瓶颈定规格"的逻辑会显得过度设计——那时候按通用配比反而更省事。</li>
+    </ul>
+
+    <p>但有一条不该省：<strong>规格表上"为什么是这个数"那一列</strong>。哪怕最后决定统一规格，也应该先写清楚每个组件的瓶颈在哪，再决定"这一次故意不按它来"。这两者的差别在于——前者是决策，后者只是不知道。</p>
+
+    <h2>下一篇</h2>
+
+    <p>到这里，这条链路从边缘到存储、从设计到部署都走完了。最后一篇换一个角度，讲一件所有部署形态都躲不开的事：<strong>进程活着、接口返回 200、日志干干净净，而数据是错的</strong>——以及每一层该拿什么去对账。</p>
+
+    <p><a href="index.html" class="back-link">← 返回系列目录</a></p>
+
+  </article>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 邹同琨 · 保留所有权利</p>
+    </div>
+  </footer>
+
+</body>
+</html>
