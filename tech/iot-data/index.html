@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IoT 高并发实时数据链路 - 系列文章</title>
-  <meta name="description" content="亿级报文从边缘采集到时序存储的架构设计与工程落地。十八篇分三段：数据怎么流、告警怎么送达、系统怎么不出错。">
+  <meta name="description" content="亿级报文从边缘采集到时序存储的架构设计与工程落地。十九篇分三段：数据怎么流、告警怎么送达、系统怎么不出错。">
   <link rel="preconnect" href="https://miaoda.feishu.cn" crossorigin>
   <link href="https://miaoda.feishu.cn/fonts/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../../styles/styles.css?v=20261126">
@@ -40,7 +40,7 @@
       <div class="article-list">
 
         <div class="intro">
-          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>与<strong>告警送达</strong>的完整链路。十八篇分三段：<strong>第一段跟一条数据走</strong>，从边缘一直走到存储；<strong>第二段跟一个告警走</strong>，从判定一直走到用户的手机；<strong>第三段横向收束</strong>，讲并发模型、端到端一致性、容量标定，以及一个容易被忽略的问题——故障为什么常常是静默的。</p>
+          <p>这是一条从<strong>边缘设备</strong>一路讲到<strong>时序存储</strong>与<strong>告警送达</strong>的完整链路。十九篇分三段：<strong>第一段跟一条数据走</strong>，从边缘一直走到存储；<strong>第二段跟一个告警走</strong>，从判定一直走到用户的手机；<strong>第三段横向收束</strong>，讲并发模型、端到端一致性、容量标定，以及一个容易被忽略的问题——故障为什么常常是静默的。</p>
           <ul>
             <li>场景：四遥构成与量级传导</li>
             <li>边缘：上送策略与可靠性</li>
@@ -49,7 +49,7 @@
             <li>消息：分区键、保序与压缩</li>
             <li>消费：四路解耦与差异化幂等</li>
             <li>存储：时序库 / Redis / 对象存储 / PostgreSQL 四种介质</li>
-            <li>告警：判定、通知决议与投递</li>
+            <li>告警：判定、通知决议、投递与在线推送</li>
             <li>横向：并发模型、端到端一致性与静默失败</li>
             <li>标定：压测与瓶颈迁移</li>
           </ul>
@@ -148,35 +148,42 @@
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 14 篇：告警审计存储——分区、归档与时间锚幂等键</a></h3>
+          <h3><a>第 14 篇：WebSocket 推送——谁该订、订了之后怎么送达</a></h3>
+          <div class="meta">即将发布</div>
+          <p class="desc">三级 destination 怎么切；「该订什么」为什么必须由服务端算；先订阅后拉快照的顺序；多 Pod 下的寻址与广播；订阅被拒怎么办。</p>
+          <p class="highlight">👉 核心观点：在线推送的难点不是"推得快"，而是"推给对的人、且他知道自己看全了"</p>
+        </div>
+
+        <div class="article-item disabled">
+          <h3><a>第 15 篇：告警审计存储——分区、归档与时间锚幂等键</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">分区表为什么拿不到全局唯一；时间锚幂等键怎么让它兼得；归档与删除的顺序。</p>
           <p class="highlight">👉 核心观点：分区与唯一性，可以靠改编码兼得</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 15 篇：高并发设计——哪里必须串行，哪里才该并行</a></h3>
+          <h3><a>第 16 篇：高并发设计——哪里必须串行，哪里才该并行</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">这条链路里哪些点必须串行、哪些才可以并行；背压、队列上界与路间隔离；为什么有的路加机器有用、有的加机器没用。</p>
           <p class="highlight">👉 核心观点：高并发的第一步是数清「必须串行的地方」</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 16 篇：端到端一致性——没有事务，怎么保证最终一致</a></h3>
+          <h3><a>第 17 篇：端到端一致性——没有事务，怎么保证最终一致</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">为什么这条链路不该被当成事务；每一步为什么都能重放、重放为什么无害；幂等键怎么选；死信与对账怎么兜底。</p>
           <p class="highlight">👉 核心观点：没有分布式事务，一致性靠「每一步都幂等 + 每一步可重放」</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 17 篇：容量与压测——怎么标定每一层的上限</a></h3>
+          <h3><a>第 18 篇：容量与压测——怎么标定每一层的上限</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">旁路压测、自证探针、阶梯法；以及为什么「提升 48 倍」上线只兑现 3.4 倍。</p>
           <p class="highlight">👉 核心观点：打掉一个瓶颈，得到的是下一个瓶颈</p>
         </div>
 
         <div class="article-item disabled">
-          <h3><a>第 18 篇：静默失败——故障为什么看不见，怎么让它可见</a></h3>
+          <h3><a>第 19 篇：静默失败——故障为什么看不见，怎么让它可见</a></h3>
           <div class="meta">即将发布</div>
           <p class="desc">进程健康、接口 200、账本已完成，数据却是错的：静默失败的几种典型形态，以及每一层该对什么账。</p>
           <p class="highlight">👉 核心观点：让系统知道自己坏了，比让它不坏更难</p>
